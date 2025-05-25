@@ -1,25 +1,31 @@
 import sys
-import logging
+from loguru import logger
 from PySide6.QtWidgets import QApplication, QMainWindow
+from PySide6.QtGui import QIntValidator
 from modules.ui import setup_ui
 from modules.animation import AnimationManager
 from modules.export import ExportManager
 import configparser
 import os
 
-# Настройка логирования
-logging.basicConfig(level=logging.INFO, filename='video_generator.log', filemode='a',
-                    format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
+# Настройка логирования с использованием loguru
+config = configparser.ConfigParser()
+config_file = 'config.ini'
+if os.path.exists(config_file):
+    config.read(config_file)
+    log_level = config.get('Logging', 'level', fallback='INFO')
+    logger.remove()  # Удаляем стандартный обработчик
+    logger.add(sys.stderr, level=log_level)
+else:
+    logger.remove()
+    logger.add(sys.stderr, level='INFO')
+    logger.warning(f"Файл конфигурации {config_file} не найден")
 
 class VideoGeneratorApp(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Video Generator")
-        self.resize(1200, 600)  # Начальный размер окна, можно изменять
-        self.setMinimumSize(800, 400)  # Минимальный размер окна
-
-        # Флаг для отслеживания состояния анимации
+        self.resize(1200, 640)
         self.is_animation_running = False
 
         # Загрузка конфигурации из config.ini
@@ -29,16 +35,20 @@ class VideoGeneratorApp(QMainWindow):
             self.config.read(config_file)
             logger.info(f"Загружен файл конфигурации: {config_file}")
         else:
-            logger.warning(f"Файл конфигурации {config_file} не найден, используются значения по умолчанию")
+            logger.warning(f"Файл конфигурации {config_file} не найден")
             self.config = None
 
         # Инициализация интерфейса
         self.ui = setup_ui(self, self.get_parameters)
+        self.ui.update_canvas_size()  # Вызываем после инициализации ui
+
+        # Добавляем валидатор для полей ввода
+        validator = QIntValidator(1, 3840, self)
+        self.ui.width_input.setValidator(validator)
+        self.ui.height_input.setValidator(validator)
 
         # Инициализация менеджера анимации
         self.anim_manager = AnimationManager(
-            figure=self.ui.figure,
-            ax=self.ui.ax,
             canvas=self.ui.canvas,
             get_parameters=self.get_parameters,
             fixed_corners_check=self.ui.fixed_corners_check,
@@ -93,10 +103,13 @@ class VideoGeneratorApp(QMainWindow):
         self.ui.fixed_corners_check.stateChanged.connect(self.on_geometry_change)
         self.ui.side_points_check.stateChanged.connect(self.on_geometry_change)
         self.ui.width_input.returnPressed.connect(self.on_geometry_change)
+        self.ui.width_input.editingFinished.connect(self.on_geometry_change)
         self.ui.height_input.returnPressed.connect(self.on_geometry_change)
+        self.ui.height_input.editingFinished.connect(self.on_geometry_change)
         self.ui.fps_input.returnPressed.connect(self.on_animation_parameters_change)
-        self.ui.duration_input.returnPressed.connect(self.on_animation_parameters_change)
+        self.ui.fps_input.editingFinished.connect(self.on_animation_parameters_change)
         self.ui.points_input.returnPressed.connect(self.on_geometry_change)
+        self.ui.points_input.editingFinished.connect(self.on_geometry_change)
 
     def toggle_animation(self):
         """Переключение между запуском и остановкой анимации."""
@@ -112,21 +125,27 @@ class VideoGeneratorApp(QMainWindow):
             self.is_animation_running = False
 
     def on_geometry_change(self):
-        """Обработка изменений параметров геометрии (ширина, высота, точки, углы, боковые точки)."""
-        logger.info("Изменение параметров геометрии")
-        if self.anim_manager.is_static_frame:
-            self.anim_manager.generate_single_frame()
-        else:
-            self.anim_manager.start_animation()
-        self.ui.update_canvas_size()  # Обновить размер холста при изменении геометрии
+        """Обработка изменений параметров геਮетрии."""
+        try:
+            logger.info("Изменение размеров холста")
+            self.ui.update_canvas_size()  # Обновляем размер холста
+            if self.anim_manager.is_static_frame:
+                self.anim_manager.generate_single_frame()
+            else:
+                self.anim_manager.start_animation()
+        except Exception as e:
+            logger.error(f"Ошибка в on_geometry_change: {e}")
 
     def on_animation_parameters_change(self):
-        """Обработка изменений параметров анимации (fps, длительность)."""
-        logger.info("Изменение параметров анимации")
-        if not self.is_animation_running:
-            self.anim_manager.generate_single_frame()
-        else:
-            self.anim_manager.start_animation()
+        """Обработка изменений параметров анимации."""
+        try:
+            logger.info("Изменение параметров анимации")
+            if not self.is_animation_running:
+                self.anim_manager.generate_single_frame()
+            else:
+                self.anim_manager.start_animation()
+        except Exception as e:
+            logger.error(f"Ошибка в on_animation_parameters_change: {e}")
 
     def _get_config_value(self, section, key, fallback, is_float=False):
         """Получение значения из конфигурации с обработкой ошибок."""
@@ -216,16 +235,20 @@ class VideoGeneratorApp(QMainWindow):
 
     def get_parameters(self):
         """Получение и валидация входных параметров из элементов интерфейса."""
-        logger.info("Получение параметров интерфейса")
-        width = self._validate_width(self.ui.width_input.text())
-        height = self._validate_height(self.ui.height_input.text())
-        fps = self._validate_fps(self.ui.fps_input.text())
-        duration = self._validate_duration(self.ui.duration_input.text())
-        num_points = self._validate_num_points(self.ui.points_input.text())
-        point_size = self.ui.point_size_slider.value()
-        line_width = self.ui.line_width_slider.value() / 10.0  # Масштабирование до 0.1-2.0
-        logger.info(f"Параметры: ширина={width}, высота={height}, fps={fps}, длительность={duration}, точки={num_points}, размер точек={point_size}, толщина линий={line_width}")
-        return width, height, fps, duration, num_points, point_size, line_width
+        try:
+            logger.info("Получение параметров интерфейса")
+            width = self._validate_width(self.ui.width_input.text())
+            height = self._validate_height(self.ui.height_input.text())
+            fps = self._validate_fps(self.ui.fps_input.text())
+            duration = self._validate_duration(self.ui.duration_input.text())
+            num_points = self._validate_num_points(self.ui.points_input.text())
+            point_size = self.ui.point_size_slider.value()
+            line_width = self.ui.line_width_slider.value() / 10.0
+            logger.info(f"Параметры: ширина={width}, высота={height}, fps={fps}, длительность={duration}, точки={num_points}, размер точек={point_size}, толщина линий={line_width}")
+            return width, height, fps, duration, num_points, point_size, line_width
+        except Exception as e:
+            logger.error(f"Ошибка в get_parameters: {e}")
+            return 1080, 1080, 30, 5, 50, 20, 4.0
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)

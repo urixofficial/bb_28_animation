@@ -1,10 +1,6 @@
 import configparser
 import os
-import logging
-
-logging.basicConfig(level=logging.INFO, filename='video_generator.log', filemode='a',
-                    format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
+from loguru import logger
 
 class ConfigManager:
     """
@@ -81,6 +77,26 @@ class ConfigManager:
         try:
             if self.config and section in self.config:
                 return self.config.getboolean(section, key)
+            return fallback
+        except (KeyError, ValueError) as e:
+            logger.warning(f"Error reading {section}.{key}, using fallback: {fallback}. Error: {e}")
+            return fallback
+
+    def get_string(self, section, key, fallback):
+        """
+        Get a string value from the configuration.
+
+        Args:
+            section (str): Configuration section.
+            key (str): Configuration key.
+            fallback (str): Default value if key is not found or invalid.
+
+        Returns:
+            str: The configuration value or fallback.
+        """
+        try:
+            if self.config and section in self.config:
+                return self.config[section][key]
             return fallback
         except (KeyError, ValueError) as e:
             logger.warning(f"Error reading {section}.{key}, using fallback: {fallback}. Error: {e}")
