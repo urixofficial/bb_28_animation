@@ -6,6 +6,7 @@ from PySide6.QtCore import QCoreApplication
 from modules.utils import initialize_points, get_color, initialize_triangle_colors
 from PIL import Image
 import pygame
+import cv2
 from loguru import logger
 
 class ExportManager:
@@ -173,8 +174,8 @@ class ExportManager:
             QCoreApplication.processEvents()
 
     def export_animation(self):
-        """Экспорт анимации как последовательности PNG."""
-        logger.info("Начало экспорта анимации")
+        """Экспорт анимации в MP4."""
+        logger.info("Начало экспорта анимации в MP4")
         self.progress_bar.setValue(0)
         QCoreApplication.processEvents()
         width, height, fps, duration, num_points, point_size, line_width = self.get_parameters()
@@ -185,27 +186,43 @@ class ExportManager:
         num_fixed = 4 if self.fixed_corners_check.isChecked() else 0
         num_side = 8 if self.side_points_check.isChecked() else 0
 
+        # Запрашиваем путь для сохранения файла MP4
         file_path, selected_filter = QFileDialog.getSaveFileName(
-            None, "Save Animation", "", "PNG Sequence (*.png)"
+            None, "Save Animation", "", "MP4 Video (*.mp4)"
         )
         if not file_path:
             logger.warning("Экспорт анимации отменен")
             self.progress_bar.setValue(0)
             return
 
-        output_dir = os.path.dirname(file_path)
-        base_name = os.path.splitext(os.path.basename(file_path))[0]
+        # Проверяем, что файл имеет расширение .mp4
+        if not file_path.lower().endswith('.mp4'):
+            file_path += '.mp4'
 
-        for frame in range(total_frames):
-            self._update_points()
-            self._handle_boundary_collisions(width, height, num_fixed, num_side)
-            frame_data = self._render_frame(width, height, point_size, line_width, base_hue)
-            try:
-                Image.fromarray(frame_data).save(f"{output_dir}/{base_name}_{frame:04d}.png", format='PNG')
+        try:
+            # Инициализация VideoWriter
+            fourcc = cv2.VideoWriter_fourcc(*'mp4v')  # Кодек для MP4
+            out = cv2.VideoWriter(file_path, fourcc, fps, (width, height))
+
+            if not out.isOpened():
+                logger.error("Не удалось открыть VideoWriter для записи MP4")
+                self.progress_bar.setValue(0)
+                return
+
+            for frame in range(total_frames):
+                self._update_points()
+                self._handle_boundary_collisions(width, height, num_fixed, num_side)
+                frame_data = self._render_frame(width, height, point_size, line_width, base_hue)
+                # Конвертируем RGB в BGR для OpenCV
+                frame_data_bgr = cv2.cvtColor(frame_data, cv2.COLOR_RGB2BGR)
+                out.write(frame_data_bgr)
                 self.progress_bar.setValue(int((frame + 1) / total_frames * 100))
                 QCoreApplication.processEvents()
-            except Exception as e:
-                logger.error(f"Ошибка при сохранении кадра {frame}: {e}")
-        logger.info(f"Последовательность PNG сохранена в {output_dir}/{base_name}_XXXX.png")
-        logger.info(f"Для конвертации в MP4 выполните: ffmpeg -framerate {fps} -i \"{output_dir}/{base_name}_%04d.png\" -c:v libx264 -pix_fmt yuv420p -preset medium -crf 15 \"{output_dir}/{base_name}.mp4\"")
-        self.progress_bar.setValue(0)
+
+            out.release()
+            logger.info(f"Видео успешно сохранено в {file_path}")
+        except Exception as e:
+            logger.error(f"Ошибка при экспорте анимации: {e}")
+        finally:
+            self.progress_bar.setValue(0)
+            QCoreApplication.processEvents()
