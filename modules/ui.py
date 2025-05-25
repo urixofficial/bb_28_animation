@@ -14,7 +14,7 @@ def setup_ui(window):
 
     # Загрузка конфигурации из config.ini
     config = configparser.ConfigParser()
-    config_file = 'config.ini'
+    config_file = '../config.ini'
     if os.path.exists(config_file):
         config.read(config_file)
     else:

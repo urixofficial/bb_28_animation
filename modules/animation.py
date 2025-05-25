@@ -1,7 +1,7 @@
 import numpy as np
 from matplotlib.animation import FuncAnimation
 from scipy.spatial import Delaunay
-from utils import initialize_points, get_color, initialize_triangle_colors
+from modules.utils import initialize_points, get_color, initialize_triangle_colors
 
 class AnimationManager:
     """

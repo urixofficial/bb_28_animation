@@ -4,11 +4,11 @@ from scipy.spatial import Delaunay
 from PySide6.QtWidgets import QFileDialog
 from PySide6.QtCore import QCoreApplication
 import numpy as np
-from utils import initialize_points, get_color, initialize_triangle_colors
+from modules.utils import initialize_points, get_color, initialize_triangle_colors
 import matplotlib.animation as animation
 import logging
 
-logging.basicConfig(level=logging.INFO, filename='video_generator.log', filemode='a',
+logging.basicConfig(level=logging.INFO, filename='../video_generator.log', filemode='a',
                     format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 

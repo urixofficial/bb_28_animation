@@ -1,8 +1,8 @@
 import sys
 from PySide6.QtWidgets import QApplication, QMainWindow
-from ui import setup_ui
-from animation import AnimationManager
-from export import ExportManager
+from modules.ui import setup_ui
+from modules.animation import AnimationManager
+from modules.export import ExportManager
 import configparser
 import os
 
