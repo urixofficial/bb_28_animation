@@ -1,24 +1,52 @@
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
-from PySide6.QtWidgets import QWidget, QGridLayout, QHBoxLayout, QLineEdit, QPushButton, QLabel, QSlider, QCheckBox, QProgressBar
+from PySide6.QtWidgets import QWidget, QGridLayout, QHBoxLayout, QLineEdit, QPushButton, QLabel, QSlider, QCheckBox, QProgressBar, QSizePolicy
 from PySide6.QtCore import Qt
 import configparser
 import os
+import logging
 
-def setup_ui(window):
+# Настройка логирования
+logging.basicConfig(level=logging.INFO, filename='video_generator.log', filemode='a',
+                    format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
+def setup_ui(window, get_parameters):
     """Настройка пользовательского интерфейса для приложения Video Generator."""
     # Создаем контейнер для хранения элементов интерфейса
     class UIContainer:
-        pass
+        def __init__(self):
+            self.figure = None
+            self.ax = None
+            self.canvas = None
+
+        def update_canvas_size(self):
+            """Обновить размер холста с учётом соотношения сторон."""
+            if not self.figure or not self.canvas or not get_parameters:
+                return
+            canvas_width = self.canvas.width()
+            canvas_height = self.canvas.height()
+            new_height = canvas_width / aspect_ratio
+            if new_height > canvas_height:
+                new_width = canvas_height * aspect_ratio
+                new_height = canvas_height
+            else:
+                new_width = canvas_width
+            self.figure.set_size_inches(new_width / 100, new_height / 100)
+            self.canvas.updateGeometry()
+            self.canvas.draw()
+            logger.debug(f"Обновлён размер холста: {new_width}x{new_height}, аспектное соотношение={aspect_ratio}")
+
     ui = UIContainer()
 
     # Загрузка конфигурации из config.ini
     config = configparser.ConfigParser()
-    config_file = '../config.ini'
+    config_file = 'config.ini'
     if os.path.exists(config_file):
         config.read(config_file)
+        logger.info(f"Загружен файл конфигурации: {config_file}")
     else:
-        print(f"Файл {config_file} не найден, используются значения по умолчанию")
+        logger.warning(f"Файл конфигурации {config_file} не найден, используются значения по умолчанию")
         config = None
 
     def get_config_value(section, key, fallback):
@@ -26,7 +54,7 @@ def setup_ui(window):
         try:
             return config[section][key] if config and section in config else fallback
         except (KeyError, ValueError):
-            print(f"Ошибка чтения {section}.{key}, используется значение: {fallback}")
+            logger.warning(f"Ошибка чтения {section}.{key}, используется значение: {fallback}")
             return fallback
 
     def get_config_bool(section, key, fallback):
@@ -34,7 +62,7 @@ def setup_ui(window):
         try:
             return config.getboolean(section, key) if config and section in config else fallback
         except (KeyError, ValueError):
-            print(f"Ошибка чтения {section}.{key}, используется значение: {fallback}")
+            logger.warning(f"Ошибка чтения {section}.{key}, используется значение: {fallback}")
             return fallback
 
     # Основной виджет и макет
@@ -43,12 +71,16 @@ def setup_ui(window):
     main_layout = QHBoxLayout(main_widget)
 
     # Левая часть: область предварительного просмотра
-    ui.figure, ui.ax = plt.subplots()
+    aspect_ratio = 1
+    ui.figure, ui.ax = plt.subplots(figsize=(8, 8 / aspect_ratio))
     ui.canvas = FigureCanvas(ui.figure)
+    ui.canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+    ui.canvas.setMinimumSize(400, 400)
     main_layout.addWidget(ui.canvas, stretch=2)
 
     # Правая часть: панель управления с сеточным макетом
     control_widget = QWidget()
+    control_widget.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
     control_layout = QGridLayout(control_widget)
     main_layout.addWidget(control_widget, stretch=1)
 
@@ -181,5 +213,8 @@ def setup_ui(window):
     control_layout.addWidget(ui.progress_bar, 14, 2, 1, 2)
 
     control_layout.setRowStretch(11, 1)
+
+    # Обновить размер холста при инициализации
+    ui.update_canvas_size()
 
     return ui

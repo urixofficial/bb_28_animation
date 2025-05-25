@@ -1,4 +1,5 @@
 import sys
+import logging
 from PySide6.QtWidgets import QApplication, QMainWindow
 from modules.ui import setup_ui
 from modules.animation import AnimationManager
@@ -6,11 +7,17 @@ from modules.export import ExportManager
 import configparser
 import os
 
+# Настройка логирования
+logging.basicConfig(level=logging.INFO, filename='video_generator.log', filemode='a',
+                    format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
 class VideoGeneratorApp(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Video Generator")
-        self.setGeometry(100, 100, 1200, 600)
+        self.resize(1200, 600)  # Начальный размер окна, можно изменять
+        self.setMinimumSize(800, 400)  # Минимальный размер окна
 
         # Флаг для отслеживания состояния анимации
         self.is_animation_running = False
@@ -20,12 +27,13 @@ class VideoGeneratorApp(QMainWindow):
         config_file = 'config.ini'
         if os.path.exists(config_file):
             self.config.read(config_file)
+            logger.info(f"Загружен файл конфигурации: {config_file}")
         else:
-            print(f"Файл {config_file} не найден, используются значения по умолчанию")
+            logger.warning(f"Файл конфигурации {config_file} не найден, используются значения по умолчанию")
             self.config = None
 
         # Инициализация интерфейса
-        self.ui = setup_ui(self)
+        self.ui = setup_ui(self, self.get_parameters)
 
         # Инициализация менеджера анимации
         self.anim_manager = AnimationManager(
@@ -93,93 +101,131 @@ class VideoGeneratorApp(QMainWindow):
     def toggle_animation(self):
         """Переключение между запуском и остановкой анимации."""
         if not self.is_animation_running:
+            logger.info("Запуск анимации")
             self.anim_manager.start_animation()
             self.ui.start_stop_button.setText("Остановить анимацию")
             self.is_animation_running = True
         else:
+            logger.info("Остановка анимации")
             self.anim_manager.stop_animation()
             self.ui.start_stop_button.setText("Начать анимацию")
             self.is_animation_running = False
 
     def on_geometry_change(self):
-        """Handle changes to geometry parameters (width, height, points, fixed corners, side points)."""
+        """Обработка изменений параметров геометрии (ширина, высота, точки, углы, боковые точки)."""
+        logger.info("Изменение параметров геометрии")
         if self.anim_manager.is_static_frame:
             self.anim_manager.generate_single_frame()
         else:
             self.anim_manager.start_animation()
+        self.ui.update_canvas_size()  # Обновить размер холста при изменении геометрии
 
     def on_animation_parameters_change(self):
-        """Handle changes to animation parameters (fps, duration)."""
+        """Обработка изменений параметров анимации (fps, длительность)."""
+        logger.info("Изменение параметров анимации")
         if not self.is_animation_running:
             self.anim_manager.generate_single_frame()
         else:
             self.anim_manager.start_animation()
 
-    def get_parameters(self):
-        """Получение и проверка входных параметров из элементов интерфейса."""
-        def get_config_value(section, key, fallback, is_float=False):
-            """Вспомогательная функция для получения значения из config.ini."""
-            try:
-                if self.config and section in self.config:
-                    return float(self.config[section][key]) if is_float else int(self.config[section][key])
-                return fallback
-            except (KeyError, ValueError):
-                print(f"Ошибка чтения {section}.{key}, используется значение: {fallback}")
-                return fallback
-
+    def _get_config_value(self, section, key, fallback, is_float=False):
+        """Получение значения из конфигурации с обработкой ошибок."""
         try:
-            # Получение и валидация ширины
-            width = int(self.ui.width_input.text())
-            width_min = get_config_value('WidthInput', 'min', 1)
-            width_max = get_config_value('WidthInput', 'max', 3840)
-            if not (width_min <= width <= width_max):
-                raise ValueError(f"Ширина должна быть в диапазоне [{width_min}, {width_max}]")
+            if self.config and section in self.config:
+                value = float(self.config[section][key]) if is_float else int(self.config[section][key])
+                return value
+            return fallback
+        except (KeyError, ValueError):
+            logger.warning(f"Ошибка чтения {section}.{key}, используется значение по умолчанию: {fallback}")
+            return fallback
 
-            # Получение и валидация высоты
-            height = int(self.ui.height_input.text())
-            height_min = get_config_value('HeightInput', 'min', 1)
-            height_max = get_config_value('HeightInput', 'max', 3840)
-            if not (height_min <= height <= height_max):
-                raise ValueError(f"Высота должна быть в диапазоне [{height_min}, {height_max}]")
+    def _validate_width(self, width_text):
+        """Валидация значения ширины."""
+        min_val = self._get_config_value('WidthInput', 'min', 1)
+        max_val = self._get_config_value('WidthInput', 'max', 3840)
+        default = self._get_config_value('WidthInput', 'default', 1080)
+        try:
+            width = int(width_text)
+            if not (min_val <= width <= max_val):
+                logger.error(f"Ширина {width} вне диапазона [{min_val}, {max_val}], используется значение по умолчанию: {default}")
+                return default
+            return width
+        except ValueError:
+            logger.error(f"Некорректное значение ширины: {width_text}, используется значение по умолчанию: {default}")
+            return default
 
-            # Получение и валидация FPS
-            fps = int(self.ui.fps_input.text())
-            fps_min = get_config_value('FPSInput', 'min', 1)
-            fps_max = get_config_value('FPSInput', 'max', 120)
-            if not (fps_min <= fps <= fps_max):
-                raise ValueError(f"FPS должен быть в диапазоне [{fps_min}, {fps_max}]")
+    def _validate_height(self, height_text):
+        """Валидация значения высоты."""
+        min_val = self._get_config_value('HeightInput', 'min', 1)
+        max_val = self._get_config_value('HeightInput', 'max', 3840)
+        default = self._get_config_value('HeightInput', 'default', 1920)
+        try:
+            height = int(height_text)
+            if not (min_val <= height <= max_val):
+                logger.error(f"Высота {height} вне диапазона [{min_val}, {max_val}], используется значение по умолчанию: {default}")
+                return default
+            return height
+        except ValueError:
+            logger.error(f"Некорректное значение высоты: {height_text}, используется значение по умолчанию: {default}")
+            return default
 
-            # Получение и валидация длительности
-            duration = float(self.ui.duration_input.text())
-            duration_min = get_config_value('DurationInput', 'min', 0.1, is_float=True)
-            duration_max = get_config_value('DurationInput', 'max', 60, is_float=True)
-            if not (duration_min <= duration <= duration_max):
-                raise ValueError(f"Длительность должна быть в диапазоне [{duration_min}, {duration_max}]")
+    def _validate_fps(self, fps_text):
+        """Валидация значения FPS."""
+        min_val = self._get_config_value('FPSInput', 'min', 1)
+        max_val = self._get_config_value('FPSInput', 'max', 120)
+        default = self._get_config_value('FPSInput', 'default', 30)
+        try:
+            fps = int(fps_text)
+            if not (min_val <= fps <= max_val):
+                logger.error(f"FPS {fps} вне диапазона [{min_val}, {max_val}], используется значение по умолчанию: {default}")
+                return default
+            return fps
+        except ValueError:
+            logger.error(f"Некорректное значение FPS: {fps_text}, используется значение по умолчанию: {default}")
+            return default
 
-            # Получение и валидация количества точек
-            num_points = int(self.ui.points_input.text())
-            points_min = get_config_value('PointsInput', 'min', 3)
-            points_max = get_config_value('PointsInput', 'max', 1000)
-            if not (points_min <= num_points <= points_max):
-                raise ValueError(f"Количество точек должно быть в диапазоне [{points_min}, {points_max}]")
+    def _validate_duration(self, duration_text):
+        """Валидация значения длительности."""
+        min_val = self._get_config_value('DurationInput', 'min', 0.1, is_float=True)
+        max_val = self._get_config_value('DurationInput', 'max', 60, is_float=True)
+        default = self._get_config_value('DurationInput', 'default', 5, is_float=True)
+        try:
+            duration = float(duration_text)
+            if not (min_val <= duration <= max_val):
+                logger.error(f"Длительность {duration} вне диапазона [{min_val}, {max_val}], используется значение по умолчанию: {default}")
+                return default
+            return duration
+        except ValueError:
+            logger.error(f"Некорректное значение длительности: {duration_text}, используется значение по умолчанию: {default}")
+            return default
 
-            # Получение значений слайдеров (они уже ограничены в ui.py)
-            point_size = self.ui.point_size_slider.value()
-            line_width = self.ui.line_width_slider.value() / 10.0  # Масштабирование до 0.1-2.0
+    def _validate_num_points(self, points_text):
+        """Валидация значения количества точек."""
+        min_val = self._get_config_value('PointsInput', 'min', 3)
+        max_val = self._get_config_value('PointsInput', 'max', 1000)
+        default = self._get_config_value('PointsInput', 'default', 50)
+        try:
+            num_points = int(points_text)
+            if not (min_val <= num_points <= max_val):
+                logger.error(f"Количество точек {num_points} вне диапазона [{min_val}, {max_val}], используется значение по умолчанию: {default}")
+                return default
+            return num_points
+        except ValueError:
+            logger.error(f"Некорректное значение количества точек: {points_text}, используется значение по умолчанию: {default}")
+            return default
 
-            return width, height, fps, duration, num_points, point_size, line_width
-        except ValueError as e:
-            print(f"Ошибка ввода: {e}")
-            # Возврат значений по умолчанию из config.ini или жестко закодированных
-            return (
-                get_config_value('WidthInput', 'default', 1080),
-                get_config_value('HeightInput', 'default', 1920),
-                get_config_value('FPSInput', 'default', 30),
-                get_config_value('DurationInput', 'default', 5, is_float=True),
-                get_config_value('PointsInput', 'default', 50),
-                self.ui.point_size_slider.value(),  # Текущее значение слайдера
-                self.ui.line_width_slider.value() / 10.0  # Текущее значение слайдера
-            )
+    def get_parameters(self):
+        """Получение и валидация входных параметров из элементов интерфейса."""
+        logger.info("Получение параметров интерфейса")
+        width = self._validate_width(self.ui.width_input.text())
+        height = self._validate_height(self.ui.height_input.text())
+        fps = self._validate_fps(self.ui.fps_input.text())
+        duration = self._validate_duration(self.ui.duration_input.text())
+        num_points = self._validate_num_points(self.ui.points_input.text())
+        point_size = self.ui.point_size_slider.value()
+        line_width = self.ui.line_width_slider.value() / 10.0  # Масштабирование до 0.1-2.0
+        logger.info(f"Параметры: ширина={width}, высота={height}, fps={fps}, длительность={duration}, точки={num_points}, размер точек={point_size}, толщина линий={line_width}")
+        return width, height, fps, duration, num_points, point_size, line_width
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)

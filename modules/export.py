@@ -8,8 +8,6 @@ from modules.utils import initialize_points, get_color, initialize_triangle_colo
 import matplotlib.animation as animation
 import logging
 
-logging.basicConfig(level=logging.INFO, filename='../video_generator.log', filemode='a',
-                    format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 class ExportManager:
@@ -58,6 +56,7 @@ class ExportManager:
 
     def initialize_points(self, num_points, width, height):
         """Initialize points and velocities using utility function."""
+        logger.info(f"Инициализация {num_points} точек для экспорта на холсте {width}x{height}")
         self.points, self.velocities = initialize_points(
             num_points, width, height, self.fixed_corners_check.isChecked(),
             self.side_points_check.isChecked(), self.get_speed()
@@ -107,8 +106,9 @@ class ExportManager:
                 if self.points[i, 1] < 0 or self.points[i, 1] > height:
                     self.velocities[i, 1] *= -1
 
-    def _render_frame(self, ax, width, height, point_size, line_width, base_hue):
-        """Render a single frame of the animation."""
+    def _setup_canvas(self, ax, width, height):
+        """Set up the canvas with the specified dimensions and background color."""
+        logger.debug("Настройка холста для экспорта")
         ax.clear()
         ax.set_xlim(0, width)
         ax.set_ylim(0, height)
@@ -116,28 +116,38 @@ class ExportManager:
         ax.set_axis_off()
         ax.set_facecolor(self.get_background_color())
 
+    def _render_triangles(self, ax, simplices, color, line_width):
+        """Render triangles with optional filling and lines."""
+        for simplex in simplices:
+            triangle = self.points[simplex]
+            triangle = np.vstack((triangle, triangle[0:1]))
+            simplex_key = tuple(sorted(simplex))
+            if self.fill_triangles_check.isChecked() and simplex_key in self.triangle_colors:
+                ax.fill(triangle[:, 0], triangle[:, 1], color=self.triangle_colors[simplex_key], zorder=1)
+            if self.show_lines_check.isChecked():
+                ax.plot(triangle[:, 0], triangle[:, 1], c=color, linewidth=line_width, zorder=2)
+
+    def _render_points(self, ax, color, point_size):
+        """Render points if enabled."""
+        if self.show_points_check.isChecked():
+            ax.scatter(self.points[:, 0], self.points[:, 1], c=[color], s=point_size, zorder=3)
+
+    def _render_frame(self, ax, width, height, point_size, line_width, base_hue):
+        """Render a single frame of the animation."""
+        logger.debug("Отрисовка кадра для экспорта")
         tri = Delaunay(self.points)
         if self.fill_triangles_check.isChecked():
             self.initialize_triangle_colors(tri.simplices, base_hue)
 
+        self._setup_canvas(ax, width, height)
         color = self.get_color()
-
-        if self.show_lines_check.isChecked() or self.fill_triangles_check.isChecked():
-            for simplex in tri.simplices:
-                triangle = self.points[simplex]
-                triangle = np.vstack((triangle, triangle[0:1]))
-                simplex_key = tuple(sorted(simplex))
-                if self.fill_triangles_check.isChecked() and simplex_key in self.triangle_colors:
-                    ax.fill(triangle[:, 0], triangle[:, 1], color=self.triangle_colors[simplex_key], zorder=1)
-                if self.show_lines_check.isChecked():
-                    ax.plot(triangle[:, 0], triangle[:, 1], c=color, linewidth=line_width, zorder=2)
-
-        if self.show_points_check.isChecked():
-            ax.scatter(self.points[:, 0], self.points[:, 1], c=[color], s=point_size, zorder=3)
+        self._render_triangles(ax, tri.simplices, color, line_width)
+        self._render_points(ax, color, point_size)
+        logger.debug("Кадр для экспорта отрисован")
 
     def export_frame(self):
         """Export the current frame as a PNG file."""
-        logger.info("Starting frame export...")
+        logger.info("Начало экспорта кадра")
         self.progress_bar.setValue(0)
         width, height, fps, duration, num_points, point_size, line_width = self.get_parameters()
 
@@ -155,12 +165,6 @@ class ExportManager:
 
         fig, ax = plt.subplots(figsize=(width / 100, height / 100))
         fig.patch.set_facecolor(self.get_background_color())
-        ax.set_facecolor(self.get_background_color())
-        ax.set_xlim(0, width)
-        ax.set_ylim(0, height)
-        ax.set_aspect('equal')
-        ax.set_axis_off()
-
         self.progress_bar.setValue(60)
         QCoreApplication.processEvents()
 
@@ -175,117 +179,122 @@ class ExportManager:
         )
 
         if not file_path:
-            logger.warning("Frame export canceled")
+            logger.warning("Экспорт кадра отменен")
             self.progress_bar.setValue(0)
             plt.close(fig)
             return
 
         try:
-            logger.info(f"Saving frame to {file_path}")
+            logger.info(f"Сохранение кадра в {file_path}")
             fig.savefig(file_path, format='png', bbox_inches='tight', pad_inches=0)
             self.progress_bar.setValue(100)
             QCoreApplication.processEvents()
-            logger.info(f"Frame successfully saved to {file_path}")
+            logger.info(f"Кадр успешно сохранен в {file_path}")
         except Exception as e:
-            logger.error(f"Error saving frame: {e}")
+            logger.error(f"Ошибка при сохранении кадра: {e}")
         finally:
             plt.close(fig)
             self.progress_bar.setValue(0)
             QCoreApplication.processEvents()
 
+    def _configure_writer(self, selected_filter, fps):
+        """Configure the animation writer based on the selected format."""
+        ffmpeg_available = 'ffmpeg' in animation.writers.list()
+        if selected_filter.startswith("MP4 Video") and ffmpeg_available:
+            return animation.FFMpegWriter(
+                fps=fps,
+                bitrate=5000,
+                extra_args=[
+                    '-pix_fmt', 'yuv420p',
+                    '-c:v', 'libx264',
+                    '-preset', 'medium',
+                    '-crf', '15',
+                    '-vf', 'colormatrix=smpte170m:bt709',
+                    '-colorspace', 'bt709'
+                ]
+            )
+        return animation.PillowWriter(fps=fps)
+
     def _save_animation(self, anim, file_path, selected_filter, fps, total_frames):
         """Save the animation to a file (MP4 or PNG sequence)."""
-        ffmpeg_available = 'ffmpeg' in animation.writers.list()
+        self.progress_bar.setValue(10)
+        QCoreApplication.processEvents()
         output_dir = os.path.dirname(file_path)
         base_name = os.path.splitext(os.path.basename(file_path))[0]
+        writer = self._configure_writer(selected_filter, fps)
 
         try:
-            if selected_filter.startswith("MP4 Video") and ffmpeg_available:
-                writer = animation.FFMpegWriter(
-                    fps=fps,
-                    bitrate=5000,
-                    extra_args=[
-                        '-pix_fmt', 'yuv420p',
-                        '-c:v', 'libx264',
-                        '-preset', 'medium',
-                        '-crf', '15',
-                        '-vf', 'colormatrix=smpte170m:bt709',
-                        '-colorspace', 'bt709'
-                    ]
-                )
-                logger.info(f"Saving MP4 to {file_path} with fps={fps}, bitrate=5000")
-                anim.save(file_path, writer=writer)
-                self.progress_bar.setValue(100)
-                QCoreApplication.processEvents()
-                logger.info(f"MP4 successfully saved to {file_path}")
-            elif selected_filter.startswith("PNG Sequence"):
-                logger.info(f"Saving PNG sequence to {output_dir}/{base_name}_XXXX.png")
-                anim.save(f"{output_dir}/{base_name}_%04d.png", writer='pillow', fps=fps)
-                self.progress_bar.setValue(100)
-                QCoreApplication.processEvents()
-                logger.info(f"PNG sequence saved to {output_dir}/{base_name}_XXXX.png")
-                if ffmpeg_available:
-                    logger.info("To convert PNG sequence to MP4 with accurate colors, run:")
-                    logger.info(f'ffmpeg -framerate {fps} -i "{output_dir}/{base_name}_%04d.png" -c:v libx264 -pix_fmt yuv420p -preset medium -crf 15 -vf colormatrix=smpte170m:bt709 -colorspace bt709 "{output_dir}/{base_name}.mp4"')
+            if selected_filter.startswith("MP4 Video") and 'ffmpeg' in animation.writers.list():
+                logger.info(f"Сохранение MP4 в {file_path} с fps={fps}, bitrate=5000")
+                anim.save(file_path, writer=writer, progress_callback=lambda i, n: self._update_progress(i, n, total_frames))
+                logger.info(f"MP4 успешно сохранен в {file_path}")
             else:
-                if not ffmpeg_available and selected_filter.startswith("MP4 Video"):
-                    logger.error("ffmpeg not available. Install ffmpeg and ensure it is in PATH.")
-                    logger.info(f"Falling back to PNG sequence export: {output_dir}/{base_name}_XXXX.png")
-                    anim.save(f"{output_dir}/{base_name}_%04d.png", writer='pillow', fps=fps)
-                    self.progress_bar.setValue(100)
-                    QCoreApplication.processEvents()
-                    logger.info(f"PNG sequence saved to {output_dir}/{base_name}_XXXX.png")
-                    logger.info("To convert PNG sequence to MP4, run:")
+                logger.info(f"Сохранение последовательности PNG в {output_dir}/{base_name}_XXXX.png")
+                anim.save(f"{output_dir}/{base_name}_%04d.png", writer=writer, progress_callback=lambda i, n: self._update_progress(i, n, total_frames))
+                logger.info(f"Последовательность PNG сохранена в {output_dir}/{base_name}_XXXX.png")
+                if 'ffmpeg' in animation.writers.list():
+                    logger.info("Для конвертации PNG в MP4 с точными цветами выполните:")
                     logger.info(f'ffmpeg -framerate {fps} -i "{output_dir}/{base_name}_%04d.png" -c:v libx264 -pix_fmt yuv420p -preset medium -crf 15 -vf colormatrix=smpte170m:bt709 -colorspace bt709 "{output_dir}/{base_name}.mp4"')
                 else:
-                    logger.error("Unsupported file format selected.")
+                    logger.warning("ffmpeg недоступен. Установите ffmpeg и убедитесь, что он в PATH.")
+                    logger.info("Для конвертации PNG в MP4 выполните:")
+                    logger.info(f'ffmpeg -framerate {fps} -i "{output_dir}/{base_name}_%04d.png" -c:v libx264 -pix_fmt yuv420p -preset medium -crf 15 -vf colormatrix=smpte170m:bt709 -colorspace bt709 "{output_dir}/{base_name}.mp4"')
         except Exception as e:
-            logger.error(f"Error saving animation: {e}")
-            if not ffmpeg_available and selected_filter.startswith("MP4 Video"):
-                logger.error("ffmpeg not found. Install ffmpeg and ensure it is in PATH.")
-                logger.info("Alternatively, select PNG sequence for export and convert manually.")
+            logger.error(f"Ошибка при сохранении анимации: {e}")
+            if not ('ffmpeg' in animation.writers.list()) and selected_filter.startswith("MP4 Video"):
+                logger.error("ffmpeg не найден. Установите ffmpeg и убедитесь, что он в PATH.")
+        finally:
+            self.progress_bar.setValue(100)
+            QCoreApplication.processEvents()
 
-    def export_animation(self):
-        """Export animation as MP4 or PNG sequence."""
-        logger.info("Starting export process...")
-        self.progress_bar.setValue(0)
+    def _update_progress(self, frame, total, total_frames):
+        """Update the progress bar during animation saving."""
+        progress = int((frame + 1) / total_frames * 90) + 10
+        self.progress_bar.setValue(progress)
         QCoreApplication.processEvents()
-        width, height, fps, duration, num_points, point_size, line_width = self.get_parameters()
+
+    def _initialize_animation(self, width, height, fps, duration, num_points):
+        """Initialize points and animation parameters."""
+        logger.info(f"Инициализация анимации: {fps} fps, {duration} секунд, {num_points} точек")
         self.initialize_points(num_points, width, height)
         self.triangle_colors = {}
-
         base_hue = self.color_slider.value() / 360.0
-        num_fixed = 4 if self.fixed_corners_check.isChecked() else 0
-        num_side = 8 if self.side_points_check.isChecked() else 0
-
         tri = Delaunay(self.points)
         if self.fill_triangles_check.isChecked():
             self.initialize_triangle_colors(tri.simplices, base_hue)
+        return int(fps * duration)
 
+    def _update_frame(self, frame, ax, width, height, num_fixed, num_side, base_hue, point_size, line_width):
+        """Update and render a single animation frame for export."""
+        self._update_points()
+        self._handle_boundary_collisions(width, height, num_fixed, num_side)
+        self._render_frame(ax, width, height, point_size, line_width, base_hue)
+        return []
+
+    def export_animation(self):
+        """Export animation as MP4 or PNG sequence."""
+        logger.info("Начало экспорта анимации")
+        self.progress_bar.setValue(0)
+        QCoreApplication.processEvents()
+        width, height, fps, duration, num_points, point_size, line_width = self.get_parameters()
+        total_frames = self._initialize_animation(width, height, fps, duration, num_points)
         self.progress_bar.setValue(10)
         QCoreApplication.processEvents()
 
         fig, ax = plt.subplots(figsize=(width / 100, height / 100))
         fig.patch.set_facecolor(self.get_background_color())
-        ax.set_facecolor(self.get_background_color())
 
-        total_frames = int(fps * duration)
-        logger.info(f"Creating animation: {fps} fps, {duration} seconds, {total_frames} frames")
+        base_hue = self.color_slider.value() / 360.0
+        num_fixed = 4 if self.fixed_corners_check.isChecked() else 0
+        num_side = 8 if self.side_points_check.isChecked() else 0
 
         def update(frame):
-            self._update_points()
-            self._handle_boundary_collisions(width, height, num_fixed, num_side)
-            self._render_frame(ax, width, height, point_size, line_width, base_hue)
-
-            progress = int((frame + 1) / total_frames * 90) + 10
-            self.progress_bar.setValue(progress)
-            QCoreApplication.processEvents()
-            return []
+            return self._update_frame(frame, ax, width, height, num_fixed, num_side, base_hue, point_size, line_width)
 
         try:
             anim = animation.FuncAnimation(fig, update, frames=total_frames, interval=1000 / fps)
         except Exception as e:
-            logger.error(f"Error creating animation: {e}")
+            logger.error(f"Ошибка при создании анимации: {e}")
             self.progress_bar.setValue(0)
             plt.close(fig)
             return
@@ -295,12 +304,12 @@ class ExportManager:
         )
 
         if not file_path:
-            logger.warning("Export canceled")
+            logger.warning("Экспорт анимации отменен")
             self.progress_bar.setValue(0)
             plt.close(fig)
             return
 
-        logger.info(f"Selected file: {file_path}, format: {selected_filter}")
+        logger.info(f"Выбран файл: {file_path}, формат: {selected_filter}")
         try:
             self._save_animation(anim, file_path, selected_filter, fps, total_frames)
         finally:
