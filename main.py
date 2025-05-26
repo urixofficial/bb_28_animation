@@ -10,7 +10,6 @@ class VideoGenerator(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Video Generator")
-        logger.add("app.log", rotation="10 MB", level="DEBUG")
         self.ui = setup_control_panel(self, self.get_parameters, OpenGLCanvas)
         self.anim_manager = AnimationManager(
             self.ui.canvas,
@@ -83,8 +82,10 @@ class VideoGenerator(QMainWindow):
         self.ui.fixed_corners_check.stateChanged.connect(self.anim_manager.update_points_and_frame)
         self.ui.side_points_check.stateChanged.connect(self.anim_manager.update_points_and_frame)
 
-        # Изменение параметров отрисовки (не влияет на позиции точек)
-        self.ui.show_points_check.stateChanged.connect(self.anim_manager.draw_frame)
+        # Изменение параметров отрисовки
+        self.ui.show_points_check.stateChanged.connect(self.anim_manager.update_render_parameters)
+        self.ui.show_lines_check.stateChanged.connect(self.anim_manager.update_lines_alpha)
+        self.ui.fill_triangles_check.stateChanged.connect(self.anim_manager.update_triangles_alpha)
         self.ui.brightness_range_slider.valueChanged.connect(self.anim_manager.update_render_parameters)
         self.ui.main_hue_slider.valueChanged.connect(self.anim_manager.update_render_parameters)
         self.ui.main_saturation_slider.valueChanged.connect(self.anim_manager.update_render_parameters)
@@ -92,11 +93,11 @@ class VideoGenerator(QMainWindow):
         self.ui.bg_hue_slider.valueChanged.connect(self.anim_manager.update_render_parameters)
         self.ui.bg_saturation_slider.valueChanged.connect(self.anim_manager.update_render_parameters)
         self.ui.bg_value_slider.valueChanged.connect(self.anim_manager.update_render_parameters)
-        self.ui.point_size_slider.valueChanged.connect(self.anim_manager.draw_frame)
-        self.ui.line_width_slider.valueChanged.connect(self.anim_manager.draw_frame)
+        self.ui.point_size_slider.valueChanged.connect(self.anim_manager.update_render_parameters)
+        self.ui.line_width_slider.valueChanged.connect(self.anim_manager.update_render_parameters)
         self.ui.transition_speed_slider.valueChanged.connect(self.anim_manager.update_render_parameters)
 
-        # Изменение скорости (влияет только на velocities, не на позиции)
+        # Изменение скорости
         self.ui.speed_slider.valueChanged.connect(self.anim_manager.update_velocities)
 
     def toggle_animation(self):

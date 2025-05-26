@@ -117,6 +117,8 @@ def setup_control_panel(window, get_parameters, canvas_class):
     ui.speed_slider.setValue(int(get_config_value('SpeedSlider', 'default', '16')))
     ui.speed_slider.setTickPosition(QSlider.TickPosition.TicksBelow)
     ui.speed_slider.setTickInterval(5)
+    ui.speed_input = QLineEdit(str(ui.speed_slider.value()))
+    ui.speed_input.setFixedWidth(50)
 
     ui.point_size_slider = QSlider(Qt.Orientation.Horizontal)
     ui.point_size_slider.setMinimum(int(get_config_value('PointSizeSlider', 'min', '1')))
@@ -124,6 +126,8 @@ def setup_control_panel(window, get_parameters, canvas_class):
     ui.point_size_slider.setValue(int(get_config_value('PointSizeSlider', 'default', '20')))
     ui.point_size_slider.setTickPosition(QSlider.TickPosition.TicksBelow)
     ui.point_size_slider.setTickInterval(10)
+    ui.point_size_input = QLineEdit(str(ui.point_size_slider.value()))
+    ui.point_size_input.setFixedWidth(50)
 
     ui.line_width_slider = QSlider(Qt.Orientation.Horizontal)
     ui.line_width_slider.setMinimum(int(get_config_value('LineWidthSlider', 'min', '1')))
@@ -131,6 +135,8 @@ def setup_control_panel(window, get_parameters, canvas_class):
     ui.line_width_slider.setValue(int(get_config_value('LineWidthSlider', 'default', '4')))
     ui.line_width_slider.setTickPosition(QSlider.TickPosition.TicksBelow)
     ui.line_width_slider.setTickInterval(2)
+    ui.line_width_input = QLineEdit(str(ui.line_width_slider.value()))
+    ui.line_width_input.setFixedWidth(50)
 
     ui.brightness_range_slider = QSlider(Qt.Orientation.Horizontal)
     ui.brightness_range_slider.setMinimum(int(get_config_value('BrightnessRangeSlider', 'min', '0')))
@@ -138,6 +144,8 @@ def setup_control_panel(window, get_parameters, canvas_class):
     ui.brightness_range_slider.setValue(int(get_config_value('BrightnessRangeSlider', 'default', '50')))
     ui.brightness_range_slider.setTickPosition(QSlider.TickPosition.TicksBelow)
     ui.brightness_range_slider.setTickInterval(10)
+    ui.brightness_range_input = QLineEdit(str(ui.brightness_range_slider.value()))
+    ui.brightness_range_input.setFixedWidth(50)
 
     ui.transition_speed_slider = QSlider(Qt.Orientation.Horizontal)
     ui.transition_speed_slider.setMinimum(int(get_config_value('TransitionSpeedSlider', 'min', '5')))
@@ -145,6 +153,102 @@ def setup_control_panel(window, get_parameters, canvas_class):
     ui.transition_speed_slider.setValue(int(get_config_value('TransitionSpeedSlider', 'default', '20')))
     ui.transition_speed_slider.setTickPosition(QSlider.TickPosition.TicksBelow)
     ui.transition_speed_slider.setTickInterval(5)
+    ui.transition_speed_input = QLineEdit(str(ui.transition_speed_slider.value()))
+    ui.transition_speed_input.setFixedWidth(50)
+
+    # Блок для параметров изображения
+    image_params_group = QGroupBox("Параметры изображения")
+    image_params_layout = QGridLayout()
+    image_params_group.setLayout(image_params_layout)
+    image_params_group.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+
+    image_params_layout.addWidget(QLabel("Ширина (px):"), 0, 0)
+    image_params_layout.addWidget(ui.width_input, 0, 1)
+    image_params_layout.addWidget(QLabel("Высота (px):"), 0, 2)
+    image_params_layout.addWidget(ui.height_input, 0, 3)
+    image_params_layout.addWidget(QLabel("Кадров/с:"), 1, 0)
+    image_params_layout.addWidget(ui.fps_input, 1, 1)
+    image_params_layout.addWidget(QLabel("Длительность (с):"), 1, 2)
+    image_params_layout.addWidget(ui.duration_input, 1, 3)
+
+    # Блок для параметров генерации
+    generation_params_group = QGroupBox("Параметры генерации")
+    generation_params_layout = QVBoxLayout()
+    generation_params_group.setLayout(generation_params_layout)
+    generation_params_group.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+
+    # Первый layout для количества точек и чекбоксов
+    points_layout = QGridLayout()
+    points_layout.addWidget(QLabel("Количество точек:"), 0, 0)
+    points_layout.addWidget(ui.points_input, 0, 1)
+    points_layout.addWidget(ui.fixed_corners_check, 0, 2)
+    points_layout.addWidget(ui.side_points_check, 0, 3)
+
+    # Второй layout для чекбоксов и слайдеров
+    render_params_layout = QGridLayout()
+    render_params_layout.addWidget(ui.show_points_check, 0, 0, 1, 2)
+    render_params_layout.addWidget(QLabel("Размер точек:"), 0, 2)
+    render_params_layout.addWidget(ui.point_size_slider, 0, 3)
+    render_params_layout.addWidget(ui.point_size_input, 0, 4)
+    render_params_layout.addWidget(ui.show_lines_check, 1, 0, 1, 2)
+    render_params_layout.addWidget(QLabel("Толщина линий:"), 1, 2)
+    render_params_layout.addWidget(ui.line_width_slider, 1, 3)
+    render_params_layout.addWidget(ui.line_width_input, 1, 4)
+    render_params_layout.addWidget(ui.fill_triangles_check, 2, 0, 1, 2)
+    render_params_layout.addWidget(QLabel("Диапазон яркости:"), 2, 2)
+    render_params_layout.addWidget(ui.brightness_range_slider, 2, 3)
+    render_params_layout.addWidget(ui.brightness_range_input, 2, 4)
+
+    generation_params_layout.addLayout(points_layout)
+    generation_params_layout.addLayout(render_params_layout)
+
+    # Подключение сигналов для синхронизации слайдеров и полей ввода
+    def update_point_size_input():
+        ui.point_size_input.setText(str(ui.point_size_slider.value()))
+
+    def update_line_width_input():
+        ui.line_width_input.setText(str(ui.line_width_slider.value()))
+
+    def update_brightness_range_input():
+        ui.brightness_range_input.setText(str(ui.brightness_range_slider.value()))
+
+    ui.point_size_slider.valueChanged.connect(update_point_size_input)
+    ui.line_width_slider.valueChanged.connect(update_line_width_input)
+    ui.brightness_range_slider.valueChanged.connect(update_brightness_range_input)
+
+    def on_point_size_input_changed():
+        try:
+            value = int(ui.point_size_input.text())
+            if ui.point_size_slider.minimum() <= value <= ui.point_size_slider.maximum():
+                ui.point_size_slider.setValue(value)
+            else:
+                ui.point_size_input.setText(str(ui.point_size_slider.value()))
+        except ValueError:
+            ui.point_size_input.setText(str(ui.point_size_slider.value()))
+
+    def on_line_width_input_changed():
+        try:
+            value = int(ui.line_width_input.text())
+            if ui.line_width_slider.minimum() <= value <= ui.line_width_slider.maximum():
+                ui.line_width_slider.setValue(value)
+            else:
+                ui.line_width_input.setText(str(ui.line_width_slider.value()))
+        except ValueError:
+            ui.line_width_input.setText(str(ui.line_width_slider.value()))
+
+    def on_brightness_range_input_changed():
+        try:
+            value = int(ui.brightness_range_input.text())
+            if ui.brightness_range_slider.minimum() <= value <= ui.brightness_range_slider.maximum():
+                ui.brightness_range_slider.setValue(value)
+            else:
+                ui.brightness_range_input.setText(str(ui.brightness_range_slider.value()))
+        except ValueError:
+            ui.brightness_range_input.setText(str(ui.brightness_range_slider.value()))
+
+    ui.point_size_input.textChanged.connect(on_point_size_input_changed)
+    ui.line_width_input.textChanged.connect(on_line_width_input_changed)
+    ui.brightness_range_input.textChanged.connect(on_brightness_range_input_changed)
 
     # Блок для основного цвета
     main_color_group = QGroupBox("Основной цвет")
@@ -328,44 +432,51 @@ def setup_control_panel(window, get_parameters, canvas_class):
     ui.bg_saturation_input.textChanged.connect(on_bg_saturation_input_changed)
     ui.bg_value_input.textChanged.connect(on_bg_value_input_changed)
 
-    # Блок для параметров изображения
-    image_params_group = QGroupBox("Параметры изображения")
-    image_params_layout = QGridLayout()
-    image_params_group.setLayout(image_params_layout)
-    image_params_group.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+    # Блок для параметров скорости
+    speed_params_group = QGroupBox("Параметры скорости")
+    speed_params_layout = QGridLayout()
+    speed_params_group.setLayout(speed_params_layout)
+    speed_params_group.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
 
-    image_params_layout.addWidget(QLabel("Ширина (px):"), 0, 0)
-    image_params_layout.addWidget(ui.width_input, 0, 1)
-    image_params_layout.addWidget(QLabel("Высота (px):"), 0, 2)
-    image_params_layout.addWidget(ui.height_input, 0, 3)
-    image_params_layout.addWidget(QLabel("Кадров/с:"), 1, 0)
-    image_params_layout.addWidget(ui.fps_input, 1, 1)
-    image_params_layout.addWidget(QLabel("Длительность (с):"), 1, 2)
-    image_params_layout.addWidget(ui.duration_input, 1, 3)
+    speed_params_layout.addWidget(QLabel("Скорость переходов:"), 0, 0)
+    speed_params_layout.addWidget(ui.transition_speed_slider, 0, 1)
+    speed_params_layout.addWidget(ui.transition_speed_input, 0, 2)
+    speed_params_layout.addWidget(QLabel("Скорость анимации:"), 1, 0)
+    speed_params_layout.addWidget(ui.speed_slider, 1, 1)
+    speed_params_layout.addWidget(ui.speed_input, 1, 2)
 
-    # Блок для параметров генерации
-    generation_params_group = QGroupBox("Параметры генерации")
-    generation_params_layout = QGridLayout()
-    generation_params_group.setLayout(generation_params_layout)
-    generation_params_group.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+    # Подключение сигналов для синхронизации слайдеров и полей ввода
+    def update_transition_speed_input():
+        ui.transition_speed_input.setText(str(ui.transition_speed_slider.value()))
 
-    generation_params_layout.addWidget(QLabel("Количество точек:"), 0, 0)
-    generation_params_layout.addWidget(ui.points_input, 0, 1)
-    generation_params_layout.addWidget(ui.fixed_corners_check, 0, 2)
-    generation_params_layout.addWidget(ui.side_points_check, 0, 3)
-    generation_params_layout.addWidget(ui.show_points_check, 1, 0, 1, 2)
-    generation_params_layout.addWidget(QLabel("Размер точек:"), 1, 2)
-    generation_params_layout.addWidget(ui.point_size_slider, 1, 3)
-    generation_params_layout.addWidget(ui.show_lines_check, 2, 0, 1, 2)
-    generation_params_layout.addWidget(QLabel("Толщина линий:"), 2, 2)
-    generation_params_layout.addWidget(ui.line_width_slider, 2, 3)
-    generation_params_layout.addWidget(ui.fill_triangles_check, 3, 0, 1, 2)
-    generation_params_layout.addWidget(QLabel("Диапазон яркости:"), 3, 2)
-    generation_params_layout.addWidget(ui.brightness_range_slider, 3, 3)
-    generation_params_layout.addWidget(QLabel("Скорость переходов:"), 4, 0)
-    generation_params_layout.addWidget(ui.transition_speed_slider, 4, 1, 1, 3)
-    generation_params_layout.addWidget(QLabel("Скорость анимации:"), 5, 0)
-    generation_params_layout.addWidget(ui.speed_slider, 5, 1, 1, 3)
+    def update_speed_input():
+        ui.speed_input.setText(str(ui.speed_slider.value()))
+
+    ui.transition_speed_slider.valueChanged.connect(update_transition_speed_input)
+    ui.speed_slider.valueChanged.connect(update_speed_input)
+
+    def on_transition_speed_input_changed():
+        try:
+            value = int(ui.transition_speed_input.text())
+            if ui.transition_speed_slider.minimum() <= value <= ui.transition_speed_slider.maximum():
+                ui.transition_speed_slider.setValue(value)
+            else:
+                ui.transition_speed_input.setText(str(ui.transition_speed_slider.value()))
+        except ValueError:
+            ui.transition_speed_input.setText(str(ui.transition_speed_slider.value()))
+
+    def on_speed_input_changed():
+        try:
+            value = int(ui.speed_input.text())
+            if ui.speed_slider.minimum() <= value <= ui.speed_slider.maximum():
+                ui.speed_slider.setValue(value)
+            else:
+                ui.speed_input.setText(str(ui.speed_slider.value()))
+        except ValueError:
+            ui.speed_input.setText(str(ui.speed_slider.value()))
+
+    ui.transition_speed_input.textChanged.connect(on_transition_speed_input_changed)
+    ui.speed_input.textChanged.connect(on_speed_input_changed)
 
     # Блок для действий (кнопки и прогресс-бар)
     actions_group = QGroupBox("Действия")
@@ -396,6 +507,7 @@ def setup_control_panel(window, get_parameters, canvas_class):
     control_layout.addWidget(generation_params_group)
     control_layout.addWidget(main_color_group)
     control_layout.addWidget(bg_color_group)
+    control_layout.addWidget(speed_params_group)
     control_layout.addStretch()
     control_layout.addWidget(actions_group)
 

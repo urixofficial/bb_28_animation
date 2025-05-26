@@ -35,8 +35,8 @@ class AnimationManager:
         self.points = np.array([])
         self.velocities = np.array([])
         self.triangle_colors = {}
-        self.triangle_alphas = {}  # Альфа-значения для каждого симплекса
-        self.line_alphas = {}  # Альфа-значения для каждой линии
+        self.triangle_alphas = {}
+        self.line_alphas = {}
         self.simplices = []
         self.timer = QTimer()
         self.timer.timeout.connect(self.update_frame)
@@ -50,14 +50,14 @@ class AnimationManager:
         """Мгновенное обновление альфа-значения для линий."""
         self.lines_alpha = 1.0 if self.show_lines_check.isChecked() else 0.0
         self.canvas.lines_alpha = self.lines_alpha
-        self.canvas.update()
+        self.update_render_parameters()
         logger.debug(f"Альфа для линий: {self.lines_alpha}")
 
     def update_triangles_alpha(self):
         """Мгновенное обновление альфа-значения для треугольников."""
         self.triangles_alpha = 1.0 if self.fill_triangles_check.isChecked() else 0.0
         self.canvas.triangles_alpha = self.triangles_alpha
-        self.canvas.update()
+        self.update_render_parameters()
         logger.debug(f"Альфа для треугольников: {self.triangles_alpha}")
 
     def initialize_points(self, num_points, width, height):
@@ -162,7 +162,6 @@ class AnimationManager:
                 new_line_keys.add(tuple(sorted([v0, v1])))
         old_line_keys = set(self.line_alphas.keys())
 
-        # Обновляем альфа-значения для треугольников
         if self.triangles_alpha > 0.0:
             base_color = self.get_color()
             self.triangle_colors = initialize_triangle_colors(
@@ -182,7 +181,6 @@ class AnimationManager:
                         if simplex_key in self.triangle_colors:
                             del self.triangle_colors[simplex_key]
 
-        # Обновляем альфа-значения для линий
         if self.lines_alpha > 0.0:
             delta = transition_speed * (1.0 / fps)
             for line_key in new_line_keys - old_line_keys:
@@ -211,6 +209,9 @@ class AnimationManager:
         self.canvas.triangles_alpha = self.triangles_alpha
         self.canvas.triangle_alphas = self.triangle_alphas
         self.canvas.line_alphas = self.line_alphas
+        self.canvas.triangle_colors = self.triangle_colors
+        self.canvas.simplices = self.simplices
+        self.canvas.points = self.points
         self.canvas.update()
 
     def generate_single_frame(self):
@@ -219,13 +220,11 @@ class AnimationManager:
         width, height, _, _, num_points, _, _ = self.get_parameters()
         self.initialize_points(num_points, width, height)
         self.is_static_frame = True
-        self.canvas.points = self.points
         self.lines_alpha = 1.0 if self.show_lines_check.isChecked() else 0.0
         self.triangles_alpha = 1.0 if self.fill_triangles_check.isChecked() else 0.0
         self.canvas.lines_alpha = self.lines_alpha
         self.canvas.triangles_alpha = self.triangles_alpha
-        self.canvas.triangle_alphas = self.triangle_alphas
-        self.canvas.line_alphas = self.line_alphas
+        self.update_triangulation_and_colors()
         self.draw_frame()
 
     def start_animation(self):
@@ -240,8 +239,7 @@ class AnimationManager:
         self.triangles_alpha = 1.0 if self.fill_triangles_check.isChecked() else 0.0
         self.canvas.lines_alpha = self.lines_alpha
         self.canvas.triangles_alpha = self.triangles_alpha
-        self.canvas.triangle_alphas = self.triangle_alphas
-        self.canvas.line_alphas = self.line_alphas
+        self.update_triangulation_and_colors()
         self.timer.start(int(1000 / fps))
 
     def stop_animation(self):
@@ -260,10 +258,7 @@ class AnimationManager:
             self.draw_frame()
         else:
             self.timer.setInterval(int(1000 / fps))
-            self.canvas.lines_alpha = self.lines_alpha
-            self.canvas.triangles_alpha = self.triangles_alpha
-            self.canvas.triangle_alphas = self.triangle_alphas
-            self.canvas.line_alphas = self.line_alphas
+            self.update_triangulation_and_colors()
             self.canvas.update()
 
     def update_render_parameters(self):
@@ -273,30 +268,23 @@ class AnimationManager:
             width, height, _, _, num_points, _, _ = self.get_parameters()
             self.initialize_points(num_points, width, height)
         else:
-            # Обновляем триангуляцию, если она устарела
             tri = Delaunay(self.points)
             self.simplices = tri.simplices
-            # Синхронизируем triangles_alpha с состоянием чекбокса
-            self.triangles_alpha = 1.0 if self.fill_triangles_check.isChecked() else 0.0
-            # Обновляем цвета и альфа-значения треугольников
             if self.triangles_alpha > 0.0:
                 base_color = self.get_color()
                 self.triangle_colors = initialize_triangle_colors(
                     self.simplices, base_color,
                     self.brightness_range_slider.value(), self.triangle_colors
                 )
-                # Обновляем triangle_alphas для текущих симплексов
                 new_simplex_keys = set(tuple(sorted(simplex)) for simplex in self.simplices)
                 for simplex_key in new_simplex_keys:
                     if simplex_key not in self.triangle_alphas:
                         self.triangle_alphas[simplex_key] = 1.0
-                # Удаляем устаревшие ключи
                 for simplex_key in list(self.triangle_alphas.keys()):
                     if simplex_key not in new_simplex_keys:
                         del self.triangle_alphas[simplex_key]
                         if simplex_key in self.triangle_colors:
                             del self.triangle_colors[simplex_key]
-            # Обновляем линии, если они включены
             if self.lines_alpha > 0.0:
                 for simplex in self.simplices:
                     for i in range(3):
@@ -304,7 +292,6 @@ class AnimationManager:
                         line_key = tuple(sorted([v0, v1]))
                         if line_key not in self.line_alphas:
                             self.line_alphas[line_key] = 1.0
-            # Синхронизируем данные с канвасом
             self.canvas.triangle_colors = self.triangle_colors
             self.canvas.triangle_alphas = self.triangle_alphas
             self.canvas.line_alphas = self.line_alphas
@@ -319,15 +306,53 @@ class AnimationManager:
         if len(self.points) == 0:
             width, height, _, _, num_points, _, _ = self.get_parameters()
             self.initialize_points(num_points, width, height)
-        else:
-            speed = self.get_speed()
-            current_speeds = np.linalg.norm(self.velocities, axis=1, keepdims=True)
-            non_zero = current_speeds > 0
-            if np.any(non_zero):
-                self.velocities[non_zero] = (self.velocities[non_zero] / current_speeds[non_zero]) * speed
-            self.canvas.update()
+            return
 
-    # Методы для доступа к данным
+        speed = self.get_speed()
+        num_fixed = 4 if self.fixed_corners_check.isChecked() else 0
+        num_side = 8 if self.side_points_check.isChecked() else 0
+        num_total = len(self.points)
+        free_points_end = num_total - num_fixed - num_side
+
+        # Обновляем скорости для свободных точек
+        if free_points_end > 0:
+            current_speeds = np.linalg.norm(self.velocities[:free_points_end], axis=1)
+            non_zero = current_speeds > 1e-6  # Избегаем деления на ноль
+            if np.any(non_zero):
+                # Нормализуем и масштабируем только ненулевые скорости
+                normalized_velocities = np.zeros_like(self.velocities[:free_points_end])
+                normalized_velocities[non_zero] = (
+                    self.velocities[:free_points_end][non_zero] /
+                    current_speeds[non_zero][:, np.newaxis]
+                ) * speed
+                self.velocities[:free_points_end] = normalized_velocities
+            else:
+                # Если все скорости нулевые, генерируем новые направления
+                angles = np.random.uniform(0, 2 * np.pi, free_points_end)
+                self.velocities[:free_points_end] = np.vstack([
+                    speed * np.cos(angles),
+                    speed * np.sin(angles)
+                ]).T
+
+        # Обновляем скорости для боковых точек
+        if num_side > 0:
+            side_idx = num_total - num_side
+            side_speed = lambda: np.random.uniform(speed / 4, speed / 2) * np.random.choice([-1, 1])
+            for i in [side_idx, side_idx + 1, side_idx + 2, side_idx + 3]:
+                current_speed = abs(self.velocities[i, 0]) or side_speed()
+                self.velocities[i, 0] = np.sign(self.velocities[i, 0]) * speed / 2 if current_speed != 0 else side_speed()
+                self.velocities[i, 1] = 0
+            for i in [side_idx + 4, side_idx + 5, side_idx + 6, side_idx + 7]:
+                current_speed = abs(self.velocities[i, 1]) or side_speed()
+                self.velocities[i, 0] = 0
+                self.velocities[i, 1] = np.sign(self.velocities[i, 1]) * speed / 2 if current_speed != 0 else side_speed()
+
+        # Скорости угловых точек остаются нулевыми
+        if num_fixed > 0:
+            self.velocities[-num_fixed:] = 0
+
+        self.canvas.update()
+
     def get_points(self):
         return self.points
 
