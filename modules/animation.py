@@ -40,6 +40,7 @@ class AnimationManager:
         self.line_alphas = {}
         self.simplices = []
         self.polygons = []
+        self.valid_edges = []  # Новый список для допустимых ребер
         self.timer = QTimer()
         self.timer.timeout.connect(self.update_frame)
         self.is_static_frame = False
@@ -50,8 +51,9 @@ class AnimationManager:
         self.polygons_input.textChanged.connect(self.update_points_and_frame)
 
     def parse_polygons(self):
-        """Парсинг полигонов из текстового поля."""
+        """Парсинг полигонов из текстового поля с преобразованием координат Y."""
         self.polygons = []
+        width, height, _, _, _, _, _ = self.get_parameters()
         text = self.polygons_input.toPlainText()
         for line in text.strip().split('\n'):
             if not line.strip():
@@ -61,7 +63,8 @@ class AnimationManager:
                 for coord in line.split('),'):
                     coord = coord.strip('() ')
                     x, y = map(float, coord.split(','))
-                    points.append([x, y])
+                    y_opengl = height - y
+                    points.append([x, y_opengl])
                 if len(points) >= 3:
                     self.polygons.append(np.array(points))
                 else:
@@ -119,40 +122,51 @@ class AnimationManager:
                 if point_in_polygon(free_points[i], polygon):
                     closest_point = closest_point_on_polygon(free_points[i], polygon)
                     self.points[i] = closest_point
-                    # Инвертируем скорость, чтобы точка двигалась прочь
                     direction = closest_point - free_points[i]
                     if np.linalg.norm(direction) > 1e-6:
                         self.velocities[i] = -self.velocities[i]
 
     def update_triangulation_and_colors(self):
-        """Обновление триангуляции и цветов треугольников."""
+        """Обновление триангуляции, цветов треугольников и допустимых ребер."""
         if len(self.points) == 0:
             return
         tri = Delaunay(self.points)
         self.simplices = tri.simplices
+        # Фильтрация ребер, исключая те, что пересекают полигоны
+        self.valid_edges = []
+        for simplex in self.simplices:
+            for i in range(3):
+                v0, v1 = simplex[i], simplex[(i + 1) % 3]
+                line_key = tuple(sorted([v0, v1]))
+                intersects = False
+                for polygon in self.polygons:
+                    if segment_intersects_polygon(self.points[v0], self.points[v1], polygon):
+                        intersects = True
+                        break
+                if not intersects:
+                    self.valid_edges.append((v0, v1))
         if self.triangles_alpha > 0.0:
             base_color = self.get_color()
             self.triangle_colors = initialize_triangle_colors(
-                tri.simplices, base_color,
+                self.simplices, base_color,
                 self.brightness_range_slider.value(), {}
             )
-            for simplex in tri.simplices:
+            for simplex in self.simplices:
                 simplex_key = tuple(sorted(simplex))
                 if simplex_key not in self.triangle_alphas:
                     self.triangle_alphas[simplex_key] = 1.0
         if self.lines_alpha > 0.0:
-            for simplex in tri.simplices:
-                for i in range(3):
-                    v0, v1 = simplex[i], simplex[(i + 1) % 3]
-                    line_key = tuple(sorted([v0, v1]))
-                    if line_key not in self.line_alphas:
-                        self.line_alphas[line_key] = 1.0
+            for edge in self.valid_edges:
+                line_key = tuple(sorted(edge))
+                if line_key not in self.line_alphas:
+                    self.line_alphas[line_key] = 1.0
         self.canvas.triangle_colors = self.triangle_colors
         self.canvas.triangle_alphas = self.triangle_alphas
         self.canvas.line_alphas = self.line_alphas
         self.canvas.simplices = self.simplices
         self.canvas.points = self.points
         self.canvas.polygons = self.polygons
+        self.canvas.valid_edges = self.valid_edges  # Передаем допустимые ребра в canvas
 
     def get_speed(self):
         """Получение скорости анимации."""
@@ -194,7 +208,6 @@ class AnimationManager:
         # Проверка столкновений с полигонами
         for i in range(free_points_end):
             for polygon in self.polygons:
-                # Проверяем, попала ли точка внутрь полигона
                 if point_in_polygon(free_points[i], polygon):
                     closest_point = closest_point_on_polygon(free_points[i], polygon)
                     self.points[i] = closest_point
@@ -202,18 +215,15 @@ class AnimationManager:
                     if np.linalg.norm(direction) > 1e-6:
                         self.velocities[i] = -self.velocities[i]
                 else:
-                    # Проверяем столкновение с границами полигона
                     for j in range(len(polygon)):
                         p1 = polygon[j]
                         p2 = polygon[(j + 1) % len(polygon)]
                         next_pos = free_points[i] + free_velocities[i]
                         if segment_intersects_polygon(free_points[i], next_pos, [p1, p2]):
-                            # Инвертируем скорость
                             normal = np.array([p2[1] - p1[1], p1[0] - p2[0]])
                             normal = normal / np.linalg.norm(normal)
                             self.velocities[i] = self.velocities[i] - 2 * np.dot(self.velocities[i], normal) * normal
 
-        # Обработка боковых точек
         if num_side > 0:
             side_idx = len(self.points) - num_side - num_polygon
             for i in [side_idx, side_idx + 1, side_idx + 2, side_idx + 3]:
@@ -237,14 +247,21 @@ class AnimationManager:
         tri = Delaunay(self.points)
         new_simplices = tri.simplices
         self.simplices = new_simplices
-        new_simplex_keys = set(tuple(sorted(simplex)) for simplex in new_simplices)
-        old_simplex_keys = set(self.triangle_alphas.keys())
-        new_line_keys = set()
+        # Обновляем допустимые ребра
+        self.valid_edges = []
         for simplex in new_simplices:
             for i in range(3):
                 v0, v1 = simplex[i], simplex[(i + 1) % 3]
-                line_key = tuple(sorted([v0, v1]))
-                new_line_keys.add(line_key)
+                intersects = False
+                for polygon in self.polygons:
+                    if segment_intersects_polygon(self.points[v0], self.points[v1], polygon):
+                        intersects = True
+                        break
+                if not intersects:
+                    self.valid_edges.append((v0, v1))
+        new_simplex_keys = set(tuple(sorted(simplex)) for simplex in new_simplices)
+        old_simplex_keys = set(self.triangle_alphas.keys())
+        new_line_keys = set(tuple(sorted(edge)) for edge in self.valid_edges)
 
         if self.triangles_alpha > 0.0:
             base_color = self.get_color()
@@ -286,6 +303,7 @@ class AnimationManager:
         self.canvas.lines_alpha = self.lines_alpha
         self.canvas.triangles_alpha = self.triangles_alpha
         self.canvas.polygons = self.polygons
+        self.canvas.valid_edges = self.valid_edges
         if not for_export:
             self.canvas.update()
 
@@ -299,6 +317,7 @@ class AnimationManager:
         self.canvas.simplices = self.simplices
         self.canvas.points = self.points
         self.canvas.polygons = self.polygons
+        self.canvas.valid_edges = self.valid_edges
         self.canvas.update()
 
     def generate_single_frame(self):
@@ -323,6 +342,7 @@ class AnimationManager:
             self.initialize_points(num_points, width, height)
         self.canvas.points = self.points
         self.canvas.polygons = self.polygons
+        self.canvas.valid_edges = self.valid_edges
         self.lines_alpha = 1.0 if self.show_lines_check.isChecked() else 0.0
         self.triangles_alpha = 1.0 if self.fill_triangles_check.isChecked() else 0.0
         self.canvas.lines_alpha = self.lines_alpha
@@ -358,6 +378,18 @@ class AnimationManager:
         else:
             tri = Delaunay(self.points)
             self.simplices = tri.simplices
+            # Обновляем допустимые ребра
+            self.valid_edges = []
+            for simplex in self.simplices:
+                for i in range(3):
+                    v0, v1 = simplex[i], simplex[(i + 1) % 3]
+                    intersects = False
+                    for polygon in self.polygons:
+                        if segment_intersects_polygon(self.points[v0], self.points[v1], polygon):
+                            intersects = True
+                            break
+                    if not intersects:
+                        self.valid_edges.append((v0, v1))
             if self.triangles_alpha > 0.0:
                 base_color = self.get_color()
                 self.triangle_colors = initialize_triangle_colors(
@@ -374,12 +406,10 @@ class AnimationManager:
                         if simplex_key in self.triangle_colors:
                             del self.triangle_colors[simplex_key]
             if self.lines_alpha > 0.0:
-                for simplex in self.simplices:
-                    for i in range(3):
-                        v0, v1 = simplex[i], simplex[(i + 1) % 3]
-                        line_key = tuple(sorted([v0, v1]))
-                        if line_key not in self.line_alphas:
-                            self.line_alphas[line_key] = 1.0
+                for edge in self.valid_edges:
+                    line_key = tuple(sorted(edge))
+                    if line_key not in self.line_alphas:
+                        self.line_alphas[line_key] = 1.0
             self.canvas.triangle_colors = self.triangle_colors
             self.canvas.triangle_alphas = self.triangle_alphas
             self.canvas.line_alphas = self.line_alphas
@@ -387,6 +417,7 @@ class AnimationManager:
             self.canvas.lines_alpha = self.lines_alpha
             self.canvas.triangles_alpha = self.triangles_alpha
             self.canvas.polygons = self.polygons
+            self.canvas.valid_edges = self.valid_edges
             self.canvas.update()
 
     def update_velocities(self):
@@ -404,7 +435,6 @@ class AnimationManager:
         num_total = len(self.points)
         free_points_end = num_total - num_fixed - num_side - num_polygon
 
-        # Обновляем скорости для свободных точек
         if free_points_end > 0:
             current_speeds = np.linalg.norm(self.velocities[:free_points_end], axis=1)
             non_zero = current_speeds > 1e-6
@@ -422,7 +452,6 @@ class AnimationManager:
                     speed * np.sin(angles)
                 ]).T
 
-        # Обновляем скорости для боковых точек
         if num_side > 0:
             side_idx = num_total - num_side - num_polygon
             side_speed = lambda: np.random.uniform(speed / 4, speed / 2) * np.random.choice([-1, 1])
@@ -435,7 +464,6 @@ class AnimationManager:
                 self.velocities[i, 0] = 0
                 self.velocities[i, 1] = np.sign(self.velocities[i, 1]) * speed / 2 if current_speed != 0 else side_speed()
 
-        # Скорости угловых точек и точек полигонов остаются нулевыми
         if num_fixed > 0 or num_polygon > 0:
             self.velocities[free_points_end:] = 0
 
@@ -467,3 +495,6 @@ class AnimationManager:
 
     def get_polygons(self):
         return self.polygons
+
+    def get_valid_edges(self):
+        return self.valid_edges
