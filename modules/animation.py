@@ -9,26 +9,12 @@ class AnimationManager:
     Управление анимацией точек с Delaunay-триангуляцией и настраиваемыми параметрами рендеринга.
     """
     def __init__(self, canvas, get_parameters, fixed_corners_check, show_points_check,
-                 show_lines_check, fill_triangles_check, color_slider,
-                 point_line_brightness_slider, brightness_range_slider, speed_slider,
-                 background_color_slider, background_brightness_slider, side_points_check):
+                 show_lines_check, fill_triangles_check, main_hue_slider,
+                 main_saturation_slider, main_value_slider, brightness_range_slider, speed_slider,
+                 bg_hue_slider, bg_saturation_slider, bg_value_slider, side_points_check,
+                 transition_speed_slider):
         """
         Инициализация менеджера анимации.
-
-        Args:
-            canvas: QOpenGLWidget для рендеринга.
-            get_parameters: Функция для получения параметров анимации.
-            fixed_corners_check: Флажок для фиксированных угловых точек.
-            show_points_check: Флажок для отображения точек.
-            show_lines_check: Флажок для отображения линий.
-            fill_triangles_check: Флажок для заливки треугольников.
-            color_slider: Слайдер для оттенка цвета точек/линий.
-            point_line_brightness_slider: Слайдер для яркости точек/линий.
-            brightness_range_slider: Слайдер для диапазона яркости треугольников.
-            speed_slider: Слайдер для скорости анимации.
-            background_color_slider: Слайдер для оттенка цвета фона.
-            background_brightness_slider: Слайдер для яркости фона.
-            side_points_check: Флажок для боковых точек.
         """
         self.canvas = canvas
         self.get_parameters = get_parameters
@@ -36,19 +22,43 @@ class AnimationManager:
         self.show_points_check = show_points_check
         self.show_lines_check = show_lines_check
         self.fill_triangles_check = fill_triangles_check
-        self.color_slider = color_slider
-        self.point_line_brightness_slider = point_line_brightness_slider
+        self.main_hue_slider = main_hue_slider
+        self.main_saturation_slider = main_saturation_slider
+        self.main_value_slider = main_value_slider
         self.brightness_range_slider = brightness_range_slider
         self.speed_slider = speed_slider
-        self.background_color_slider = background_color_slider
-        self.background_brightness_slider = background_brightness_slider
+        self.bg_hue_slider = bg_hue_slider
+        self.bg_saturation_slider = bg_saturation_slider
+        self.bg_value_slider = bg_value_slider
         self.side_points_check = side_points_check
+        self.transition_speed_slider = transition_speed_slider
         self.points = np.array([])
         self.velocities = np.array([])
         self.triangle_colors = {}
+        self.triangle_alphas = {}  # Альфа-значения для каждого симплекса
+        self.line_alphas = {}  # Альфа-значения для каждой линии
+        self.simplices = []
         self.timer = QTimer()
         self.timer.timeout.connect(self.update_frame)
         self.is_static_frame = False
+        self.lines_alpha = 1.0 if self.show_lines_check.isChecked() else 0.0
+        self.triangles_alpha = 1.0 if self.fill_triangles_check.isChecked() else 0.0
+        self.show_lines_check.stateChanged.connect(self.update_lines_alpha)
+        self.fill_triangles_check.stateChanged.connect(self.update_triangles_alpha)
+
+    def update_lines_alpha(self):
+        """Мгновенное обновление альфа-значения для линий."""
+        self.lines_alpha = 1.0 if self.show_lines_check.isChecked() else 0.0
+        self.canvas.lines_alpha = self.lines_alpha
+        self.canvas.update()
+        logger.debug(f"Альфа для линий: {self.lines_alpha}")
+
+    def update_triangles_alpha(self):
+        """Мгновенное обновление альфа-значения для треугольников."""
+        self.triangles_alpha = 1.0 if self.fill_triangles_check.isChecked() else 0.0
+        self.canvas.triangles_alpha = self.triangles_alpha
+        self.canvas.update()
+        logger.debug(f"Альфа для треугольников: {self.triangles_alpha}")
 
     def initialize_points(self, num_points, width, height):
         """Инициализация точек и их скоростей."""
@@ -57,12 +67,36 @@ class AnimationManager:
             num_points, width, height, self.fixed_corners_check.isChecked(),
             self.side_points_check.isChecked(), self.get_speed()
         )
+        self.update_triangulation_and_colors()
+
+    def update_triangulation_and_colors(self):
+        """Обновление триангуляции и цветов треугольников."""
+        if len(self.points) == 0:
+            return
         tri = Delaunay(self.points)
-        self.canvas.simplices = tri.simplices
-        self.triangle_colors = initialize_triangle_colors(
-            tri.simplices, self.color_slider.value() / 360.0,
-            self.brightness_range_slider.value(), {}
-        )
+        self.simplices = tri.simplices
+        if self.triangles_alpha > 0.0:
+            base_color = self.get_color()
+            self.triangle_colors = initialize_triangle_colors(
+                tri.simplices, base_color,
+                self.brightness_range_slider.value(), {}
+            )
+            for simplex in tri.simplices:
+                simplex_key = tuple(sorted(simplex))
+                if simplex_key not in self.triangle_alphas:
+                    self.triangle_alphas[simplex_key] = 1.0
+        if self.lines_alpha > 0.0:
+            for simplex in tri.simplices:
+                for i in range(3):
+                    v0, v1 = simplex[i], simplex[(i + 1) % 3]
+                    line_key = tuple(sorted([v0, v1]))
+                    if line_key not in self.line_alphas:
+                        self.line_alphas[line_key] = 1.0
+        self.canvas.triangle_colors = self.triangle_colors
+        self.canvas.triangle_alphas = self.triangle_alphas
+        self.canvas.line_alphas = self.line_alphas
+        self.canvas.simplices = self.simplices
+        self.canvas.points = self.points
 
     def get_speed(self):
         """Получение скорости анимации."""
@@ -70,11 +104,15 @@ class AnimationManager:
 
     def get_color(self):
         """Получение RGB цвета для точек и линий."""
-        return get_color(self.color_slider.value(), self.point_line_brightness_slider.value())
+        return get_color(self.main_hue_slider.value(),
+                        self.main_saturation_slider.value(),
+                        self.main_value_slider.value())
 
     def get_background_color(self):
         """Получение RGB цвета для фона."""
-        return get_color(self.background_color_slider.value(), self.background_brightness_slider.value())
+        return get_color(self.bg_hue_slider.value(),
+                        self.bg_saturation_slider.value(),
+                        self.bg_value_slider.value())
 
     def _update_points(self):
         """Обновление позиций точек на основе скоростей."""
@@ -82,12 +120,15 @@ class AnimationManager:
 
     def _handle_boundary_collisions(self, width, height, num_fixed, num_side):
         """Обработка столкновений точек с границами холста."""
-        free_points = self.points[:-num_fixed - num_side]
-        free_velocities = self.velocities[:-num_fixed - num_side]
-        mask_x = (free_points[:, 0] < 0) | (free_points[:, 0] > width)
-        mask_y = (free_points[:, 1] < 0) | (free_points[:, 1] > height)
-        free_velocities[:, 0][mask_x] *= -1
-        free_velocities[:, 1][mask_y] *= -1
+        if len(self.points) == 0:
+            return
+        free_points = self.points[:-num_fixed - num_side] if num_fixed + num_side > 0 else self.points
+        free_velocities = self.velocities[:-num_fixed - num_side] if num_fixed + num_side > 0 else self.velocities
+        if len(free_points) > 0:
+            mask_x = (free_points[:, 0] < 0) | (free_points[:, 0] > width)
+            mask_y = (free_points[:, 1] < 0) | (free_points[:, 1] > height)
+            free_velocities[:, 0][mask_x] *= -1
+            free_velocities[:, 1][mask_y] *= -1
 
         if num_side > 0:
             side_idx = len(self.points) - num_side
@@ -98,28 +139,78 @@ class AnimationManager:
                 if self.points[i, 1] < 0 or self.points[i, 1] > height:
                     self.velocities[i, 1] *= -1
 
-    def update_frame(self):
+    def update_frame(self, for_export=False):
         """Обновление кадра анимации."""
-        if self.is_static_frame:
+        if self.is_static_frame and not for_export:
             return
         width, height, fps, _, num_points, point_size, line_width = self.get_parameters()
         num_fixed = 4 if self.fixed_corners_check.isChecked() else 0
         num_side = 8 if self.side_points_check.isChecked() else 0
+        transition_speed = self.transition_speed_slider.value() / 10.0
+
         self._update_points()
         self._handle_boundary_collisions(width, height, num_fixed, num_side)
         tri = Delaunay(self.points)
-        self.canvas.points = self.points
-        self.canvas.simplices = tri.simplices
-        if self.fill_triangles_check.isChecked():
+        new_simplices = tri.simplices
+        self.simplices = new_simplices
+        new_simplex_keys = set(tuple(sorted(simplex)) for simplex in new_simplices)
+        old_simplex_keys = set(self.triangle_alphas.keys())
+        new_line_keys = set()
+        for simplex in new_simplices:
+            for i in range(3):
+                v0, v1 = simplex[i], simplex[(i + 1) % 3]
+                new_line_keys.add(tuple(sorted([v0, v1])))
+        old_line_keys = set(self.line_alphas.keys())
+
+        # Обновляем альфа-значения для треугольников
+        if self.triangles_alpha > 0.0:
+            base_color = self.get_color()
             self.triangle_colors = initialize_triangle_colors(
-                tri.simplices, self.color_slider.value() / 360.0,
+                new_simplices, base_color,
                 self.brightness_range_slider.value(), self.triangle_colors
             )
-            self.canvas.triangle_colors = self.triangle_colors
-        self.canvas.update()
+            delta = transition_speed * (1.0 / fps)
+            for simplex_key in new_simplex_keys - old_simplex_keys:
+                self.triangle_alphas[simplex_key] = 0.0
+            for simplex_key in list(self.triangle_alphas.keys()):
+                if simplex_key in new_simplex_keys:
+                    self.triangle_alphas[simplex_key] = min(self.triangle_alphas[simplex_key] + delta, 1.0)
+                else:
+                    self.triangle_alphas[simplex_key] = max(self.triangle_alphas[simplex_key] - delta, 0.0)
+                    if self.triangle_alphas[simplex_key] <= 0.01:
+                        del self.triangle_alphas[simplex_key]
+                        if simplex_key in self.triangle_colors:
+                            del self.triangle_colors[simplex_key]
+
+        # Обновляем альфа-значения для линий
+        if self.lines_alpha > 0.0:
+            delta = transition_speed * (1.0 / fps)
+            for line_key in new_line_keys - old_line_keys:
+                self.line_alphas[line_key] = 0.0
+            for line_key in list(self.line_alphas.keys()):
+                if line_key in new_line_keys:
+                    self.line_alphas[line_key] = min(self.line_alphas[line_key] + delta, 1.0)
+                else:
+                    self.line_alphas[line_key] = max(self.line_alphas[line_key] - delta, 0.0)
+                    if self.line_alphas[line_key] <= 0.01:
+                        del self.line_alphas[line_key]
+
+        self.canvas.points = self.points
+        self.canvas.simplices = new_simplices
+        self.canvas.triangle_colors = self.triangle_colors
+        self.canvas.triangle_alphas = self.triangle_alphas
+        self.canvas.line_alphas = self.line_alphas
+        self.canvas.lines_alpha = self.lines_alpha
+        self.canvas.triangles_alpha = self.triangles_alpha
+        if not for_export:
+            self.canvas.update()
 
     def draw_frame(self):
         """Отрисовка текущего кадра."""
+        self.canvas.lines_alpha = self.lines_alpha
+        self.canvas.triangles_alpha = self.triangles_alpha
+        self.canvas.triangle_alphas = self.triangle_alphas
+        self.canvas.line_alphas = self.line_alphas
         self.canvas.update()
 
     def generate_single_frame(self):
@@ -129,15 +220,28 @@ class AnimationManager:
         self.initialize_points(num_points, width, height)
         self.is_static_frame = True
         self.canvas.points = self.points
+        self.lines_alpha = 1.0 if self.show_lines_check.isChecked() else 0.0
+        self.triangles_alpha = 1.0 if self.fill_triangles_check.isChecked() else 0.0
+        self.canvas.lines_alpha = self.lines_alpha
+        self.canvas.triangles_alpha = self.triangles_alpha
+        self.canvas.triangle_alphas = self.triangle_alphas
+        self.canvas.line_alphas = self.line_alphas
         self.draw_frame()
 
     def start_animation(self):
-        """Запуск анимации с нуля."""
+        """Запуск анимации с текущими точками."""
         logger.info("Запуск анимации")
         self.is_static_frame = False
         width, height, fps, _, num_points, _, _ = self.get_parameters()
-        self.initialize_points(num_points, width, height)
+        if len(self.points) == 0 or len(self.points) != num_points or self.points.shape[1] != 2:
+            self.initialize_points(num_points, width, height)
         self.canvas.points = self.points
+        self.lines_alpha = 1.0 if self.show_lines_check.isChecked() else 0.0
+        self.triangles_alpha = 1.0 if self.fill_triangles_check.isChecked() else 0.0
+        self.canvas.lines_alpha = self.lines_alpha
+        self.canvas.triangles_alpha = self.triangles_alpha
+        self.canvas.triangle_alphas = self.triangle_alphas
+        self.canvas.line_alphas = self.line_alphas
         self.timer.start(int(1000 / fps))
 
     def stop_animation(self):
@@ -147,11 +251,103 @@ class AnimationManager:
         self.is_static_frame = True
         self.draw_frame()
 
-    def update_animation(self):
-        """Обновление анимации или статического кадра."""
+    def update_points_and_frame(self):
+        """Обновление точек и кадра при изменении num_points, width, height или чекбоксов."""
+        logger.info("Обновление точек и кадра")
+        width, height, fps, _, num_points, _, _ = self.get_parameters()
+        self.initialize_points(num_points, width, height)
         if self.is_static_frame:
             self.draw_frame()
         else:
-            width, height, fps, _, _, _, _ = self.get_parameters()
             self.timer.setInterval(int(1000 / fps))
+            self.canvas.lines_alpha = self.lines_alpha
+            self.canvas.triangles_alpha = self.triangles_alpha
+            self.canvas.triangle_alphas = self.triangle_alphas
+            self.canvas.line_alphas = self.line_alphas
             self.canvas.update()
+
+    def update_render_parameters(self):
+        """Обновление параметров отрисовки (цвета, яркость, прозрачность) в реальном времени."""
+        logger.info("Обновление параметров отрисовки")
+        if len(self.points) == 0:
+            width, height, _, _, num_points, _, _ = self.get_parameters()
+            self.initialize_points(num_points, width, height)
+        else:
+            # Обновляем триангуляцию, если она устарела
+            tri = Delaunay(self.points)
+            self.simplices = tri.simplices
+            # Синхронизируем triangles_alpha с состоянием чекбокса
+            self.triangles_alpha = 1.0 if self.fill_triangles_check.isChecked() else 0.0
+            # Обновляем цвета и альфа-значения треугольников
+            if self.triangles_alpha > 0.0:
+                base_color = self.get_color()
+                self.triangle_colors = initialize_triangle_colors(
+                    self.simplices, base_color,
+                    self.brightness_range_slider.value(), self.triangle_colors
+                )
+                # Обновляем triangle_alphas для текущих симплексов
+                new_simplex_keys = set(tuple(sorted(simplex)) for simplex in self.simplices)
+                for simplex_key in new_simplex_keys:
+                    if simplex_key not in self.triangle_alphas:
+                        self.triangle_alphas[simplex_key] = 1.0
+                # Удаляем устаревшие ключи
+                for simplex_key in list(self.triangle_alphas.keys()):
+                    if simplex_key not in new_simplex_keys:
+                        del self.triangle_alphas[simplex_key]
+                        if simplex_key in self.triangle_colors:
+                            del self.triangle_colors[simplex_key]
+            # Обновляем линии, если они включены
+            if self.lines_alpha > 0.0:
+                for simplex in self.simplices:
+                    for i in range(3):
+                        v0, v1 = simplex[i], simplex[(i + 1) % 3]
+                        line_key = tuple(sorted([v0, v1]))
+                        if line_key not in self.line_alphas:
+                            self.line_alphas[line_key] = 1.0
+            # Синхронизируем данные с канвасом
+            self.canvas.triangle_colors = self.triangle_colors
+            self.canvas.triangle_alphas = self.triangle_alphas
+            self.canvas.line_alphas = self.line_alphas
+            self.canvas.simplices = self.simplices
+            self.canvas.lines_alpha = self.lines_alpha
+            self.canvas.triangles_alpha = self.triangles_alpha
+            self.canvas.update()
+
+    def update_velocities(self):
+        """Обновление скоростей точек без изменения их позиций."""
+        logger.info("Обновление скоростей точек")
+        if len(self.points) == 0:
+            width, height, _, _, num_points, _, _ = self.get_parameters()
+            self.initialize_points(num_points, width, height)
+        else:
+            speed = self.get_speed()
+            current_speeds = np.linalg.norm(self.velocities, axis=1, keepdims=True)
+            non_zero = current_speeds > 0
+            if np.any(non_zero):
+                self.velocities[non_zero] = (self.velocities[non_zero] / current_speeds[non_zero]) * speed
+            self.canvas.update()
+
+    # Методы для доступа к данным
+    def get_points(self):
+        return self.points
+
+    def get_velocities(self):
+        return self.velocities
+
+    def get_simplices(self):
+        return self.simplices
+
+    def get_triangle_colors(self):
+        return self.triangle_colors
+
+    def get_triangle_alphas(self):
+        return self.triangle_alphas
+
+    def get_line_alphas(self):
+        return self.line_alphas
+
+    def get_lines_alpha(self):
+        return self.lines_alpha
+
+    def get_triangles_alpha(self):
+        return self.triangles_alpha

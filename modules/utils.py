@@ -1,4 +1,3 @@
-# utils.py
 import numpy as np
 import colorsys
 
@@ -35,19 +34,12 @@ def initialize_points(num_points, width, height, fixed_corners, side_points, spe
         side_velocities_list = []
         side_speed = lambda: np.random.uniform(speed / 4, speed / 2) * np.random.choice([-1, 1])
 
-        # Bottom side (y=0, x from 0 to width)
         side_points_list.extend([[0, 0], [width, 0]])
         side_velocities_list.extend([[side_speed(), 0], [side_speed(), 0]])
-
-        # Top side (y=height, x from 0 to width)
         side_points_list.extend([[0, height], [width, height]])
         side_velocities_list.extend([[side_speed(), 0], [side_speed(), 0]])
-
-        # Left side (x=0, y from 0 to height)
         side_points_list.extend([[0, 0], [0, height]])
         side_velocities_list.extend([[0, side_speed()], [0, side_speed()]])
-
-        # Right side (x=width, y from 0 to height)
         side_points_list.extend([[width, 0], [width, height]])
         side_velocities_list.extend([[0, side_speed()], [0, side_speed()]])
 
@@ -56,48 +48,48 @@ def initialize_points(num_points, width, height, fixed_corners, side_points, spe
 
     return points, velocities
 
-def get_color(hue, brightness):
+def get_color(hue, saturation, value):
     """
-    Convert hue and brightness to RGB color.
+    Convert HSV values to RGB color.
 
     Args:
         hue (float): Hue value (0-360).
-        brightness (float): Brightness value (0-100).
+        saturation (float): Saturation value (0-100).
+        value (float): Value/Brightness value (0-100).
 
     Returns:
         tuple: RGB color values.
     """
-    hue = hue / 360.0  # Normalize to [0, 1]
-    brightness = brightness / 100.0  # Normalize to [0, 1]
-    if brightness <= 0.5:
-        value = brightness * 2
-        saturation = 1.0
-    else:
-        value = 1.0
-        saturation = 1.0 - (brightness - 0.5) * 2
+    hue = hue / 360.0
+    saturation = saturation / 100.0
+    value = value / 100.0
     return colorsys.hsv_to_rgb(hue, saturation, value)
 
-def initialize_triangle_colors(simplices, base_hue, brightness_range, triangle_colors):
+def initialize_triangle_colors(simplices, base_color, brightness_range, triangle_colors):
     """
-    Initialize or update colors for triangles, varying only brightness.
+    Initialize or update colors for triangles, varying only brightness based on base color.
 
     Args:
         simplices (list): List of triangle simplices from Delaunay triangulation.
-        base_hue (float): Base hue for colors (0-1).
+        base_color (tuple): Base RGB color of points/lines (from get_color).
         brightness_range (float): Brightness range (0-100).
         triangle_colors (dict): Existing triangle colors to preserve.
 
     Returns:
-        dict: Updated triangle colors.
+        dict: Updated triangle colors with RGBA.
     """
     brightness_range = brightness_range / 100.0
     new_colors = {}
+    base_hsv = colorsys.rgb_to_hsv(*base_color)
+    base_hue = base_hsv[0]
+    base_saturation = base_hsv[1]
+
     for simplex in simplices:
         simplex_key = tuple(sorted(simplex))
         if simplex_key in triangle_colors:
             new_colors[simplex_key] = triangle_colors[simplex_key]
         else:
             value = max(0.0, min(1.0, 1.0 - brightness_range + np.random.rand() * brightness_range * 2))
-            rgb = colorsys.hsv_to_rgb(base_hue, 1.0, value)
-            new_colors[simplex_key] = rgb
+            rgb = colorsys.hsv_to_rgb(base_hue, base_saturation, value)
+            new_colors[simplex_key] = rgb + (1.0,)  # Добавляем альфа-канал
     return new_colors
