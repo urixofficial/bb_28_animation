@@ -1,6 +1,6 @@
 import numpy as np
 from scipy.spatial import Delaunay
-from modules.utils import initialize_points, get_color, initialize_triangle_colors
+from modules.utils import initialize_points, get_color, initialize_triangle_colors, point_in_polygon, segment_intersects_polygon, closest_point_on_polygon
 from loguru import logger
 from PySide6.QtCore import QTimer
 
@@ -12,7 +12,7 @@ class AnimationManager:
                  show_lines_check, fill_triangles_check, main_hue_slider,
                  main_saturation_slider, main_value_slider, brightness_range_slider, speed_slider,
                  bg_hue_slider, bg_saturation_slider, bg_value_slider, side_points_check,
-                 transition_speed_slider):
+                 transition_speed_slider, polygons_input):
         """
         Инициализация менеджера анимации.
         """
@@ -32,12 +32,14 @@ class AnimationManager:
         self.bg_value_slider = bg_value_slider
         self.side_points_check = side_points_check
         self.transition_speed_slider = transition_speed_slider
+        self.polygons_input = polygons_input
         self.points = np.array([])
         self.velocities = np.array([])
         self.triangle_colors = {}
         self.triangle_alphas = {}
         self.line_alphas = {}
         self.simplices = []
+        self.polygons = []
         self.timer = QTimer()
         self.timer.timeout.connect(self.update_frame)
         self.is_static_frame = False
@@ -45,6 +47,28 @@ class AnimationManager:
         self.triangles_alpha = 1.0 if self.fill_triangles_check.isChecked() else 0.0
         self.show_lines_check.stateChanged.connect(self.update_lines_alpha)
         self.fill_triangles_check.stateChanged.connect(self.update_triangles_alpha)
+        self.polygons_input.textChanged.connect(self.update_points_and_frame)
+
+    def parse_polygons(self):
+        """Парсинг полигонов из текстового поля."""
+        self.polygons = []
+        text = self.polygons_input.toPlainText()
+        for line in text.strip().split('\n'):
+            if not line.strip():
+                continue
+            try:
+                points = []
+                for coord in line.split('),'):
+                    coord = coord.strip('() ')
+                    x, y = map(float, coord.split(','))
+                    points.append([x, y])
+                if len(points) >= 3:
+                    self.polygons.append(np.array(points))
+                else:
+                    logger.warning(f"Пропущен полигон: требуется минимум 3 точки, получено {len(points)}")
+            except ValueError as e:
+                logger.warning(f"Ошибка парсинга полигона: {line}, ошибка: {e}")
+        logger.info(f"Распознано {len(self.polygons)} полигонов")
 
     def update_lines_alpha(self):
         """Мгновенное обновление альфа-значения для линий."""
@@ -61,13 +85,44 @@ class AnimationManager:
         logger.debug(f"Альфа для треугольников: {self.triangles_alpha}")
 
     def initialize_points(self, num_points, width, height):
-        """Инициализация точек и их скоростей."""
+        """Инициализация точек и их скоростей с учетом полигонов."""
         logger.info(f"Инициализация {num_points} точек на холсте {width}x{height}")
+        self.parse_polygons()
         self.points, self.velocities = initialize_points(
             num_points, width, height, self.fixed_corners_check.isChecked(),
             self.side_points_check.isChecked(), self.get_speed()
         )
+        # Добавляем статичные точки в вершины полигонов
+        polygon_points = []
+        polygon_velocities = []
+        for polygon in self.polygons:
+            polygon_points.extend(polygon)
+            polygon_velocities.extend([np.zeros(2)] * len(polygon))
+        if polygon_points:
+            self.points = np.vstack((self.points, np.array(polygon_points)))
+            self.velocities = np.vstack((self.velocities, np.array(polygon_velocities)))
+        # Проверяем и выталкиваем точки, оказавшиеся внутри полигонов
+        self._push_points_out_of_polygons(width, height)
         self.update_triangulation_and_colors()
+
+    def _push_points_out_of_polygons(self, width, height):
+        """Выталкивание точек из полигонов."""
+        num_fixed = 4 if self.fixed_corners_check.isChecked() else 0
+        num_side = 8 if self.side_points_check.isChecked() else 0
+        num_polygon = sum(len(polygon) for polygon in self.polygons)
+        free_points_end = len(self.points) - num_fixed - num_side - num_polygon
+        if free_points_end <= 0:
+            return
+        free_points = self.points[:free_points_end]
+        for i in range(free_points_end):
+            for polygon in self.polygons:
+                if point_in_polygon(free_points[i], polygon):
+                    closest_point = closest_point_on_polygon(free_points[i], polygon)
+                    self.points[i] = closest_point
+                    # Инвертируем скорость, чтобы точка двигалась прочь
+                    direction = closest_point - free_points[i]
+                    if np.linalg.norm(direction) > 1e-6:
+                        self.velocities[i] = -self.velocities[i]
 
     def update_triangulation_and_colors(self):
         """Обновление триангуляции и цветов треугольников."""
@@ -97,6 +152,7 @@ class AnimationManager:
         self.canvas.line_alphas = self.line_alphas
         self.canvas.simplices = self.simplices
         self.canvas.points = self.points
+        self.canvas.polygons = self.polygons
 
     def get_speed(self):
         """Получение скорости анимации."""
@@ -119,19 +175,47 @@ class AnimationManager:
         self.points += self.velocities
 
     def _handle_boundary_collisions(self, width, height, num_fixed, num_side):
-        """Обработка столкновений точек с границами холста."""
+        """Обработка столкновений точек с границами холста и полигонами."""
         if len(self.points) == 0:
             return
-        free_points = self.points[:-num_fixed - num_side] if num_fixed + num_side > 0 else self.points
-        free_velocities = self.velocities[:-num_fixed - num_side] if num_fixed + num_side > 0 else self.velocities
-        if len(free_points) > 0:
-            mask_x = (free_points[:, 0] < 0) | (free_points[:, 0] > width)
-            mask_y = (free_points[:, 1] < 0) | (free_points[:, 1] > height)
-            free_velocities[:, 0][mask_x] *= -1
-            free_velocities[:, 1][mask_y] *= -1
+        num_polygon = sum(len(polygon) for polygon in self.polygons)
+        free_points_end = len(self.points) - num_fixed - num_side - num_polygon
+        if free_points_end <= 0:
+            return
+        free_points = self.points[:free_points_end]
+        free_velocities = self.velocities[:free_points_end]
 
+        # Проверка границ холста
+        mask_x = (free_points[:, 0] < 0) | (free_points[:, 0] > width)
+        mask_y = (free_points[:, 1] < 0) | (free_points[:, 1] > height)
+        free_velocities[:, 0][mask_x] *= -1
+        free_velocities[:, 1][mask_y] *= -1
+
+        # Проверка столкновений с полигонами
+        for i in range(free_points_end):
+            for polygon in self.polygons:
+                # Проверяем, попала ли точка внутрь полигона
+                if point_in_polygon(free_points[i], polygon):
+                    closest_point = closest_point_on_polygon(free_points[i], polygon)
+                    self.points[i] = closest_point
+                    direction = closest_point - free_points[i]
+                    if np.linalg.norm(direction) > 1e-6:
+                        self.velocities[i] = -self.velocities[i]
+                else:
+                    # Проверяем столкновение с границами полигона
+                    for j in range(len(polygon)):
+                        p1 = polygon[j]
+                        p2 = polygon[(j + 1) % len(polygon)]
+                        next_pos = free_points[i] + free_velocities[i]
+                        if segment_intersects_polygon(free_points[i], next_pos, [p1, p2]):
+                            # Инвертируем скорость
+                            normal = np.array([p2[1] - p1[1], p1[0] - p2[0]])
+                            normal = normal / np.linalg.norm(normal)
+                            self.velocities[i] = self.velocities[i] - 2 * np.dot(self.velocities[i], normal) * normal
+
+        # Обработка боковых точек
         if num_side > 0:
-            side_idx = len(self.points) - num_side
+            side_idx = len(self.points) - num_side - num_polygon
             for i in [side_idx, side_idx + 1, side_idx + 2, side_idx + 3]:
                 if self.points[i, 0] < 0 or self.points[i, 0] > width:
                     self.velocities[i, 0] *= -1
@@ -159,8 +243,8 @@ class AnimationManager:
         for simplex in new_simplices:
             for i in range(3):
                 v0, v1 = simplex[i], simplex[(i + 1) % 3]
-                new_line_keys.add(tuple(sorted([v0, v1])))
-        old_line_keys = set(self.line_alphas.keys())
+                line_key = tuple(sorted([v0, v1]))
+                new_line_keys.add(line_key)
 
         if self.triangles_alpha > 0.0:
             base_color = self.get_color()
@@ -183,8 +267,9 @@ class AnimationManager:
 
         if self.lines_alpha > 0.0:
             delta = transition_speed * (1.0 / fps)
-            for line_key in new_line_keys - old_line_keys:
-                self.line_alphas[line_key] = 0.0
+            for line_key in new_line_keys:
+                if line_key not in self.line_alphas:
+                    self.line_alphas[line_key] = 0.0
             for line_key in list(self.line_alphas.keys()):
                 if line_key in new_line_keys:
                     self.line_alphas[line_key] = min(self.line_alphas[line_key] + delta, 1.0)
@@ -200,6 +285,7 @@ class AnimationManager:
         self.canvas.line_alphas = self.line_alphas
         self.canvas.lines_alpha = self.lines_alpha
         self.canvas.triangles_alpha = self.triangles_alpha
+        self.canvas.polygons = self.polygons
         if not for_export:
             self.canvas.update()
 
@@ -212,6 +298,7 @@ class AnimationManager:
         self.canvas.triangle_colors = self.triangle_colors
         self.canvas.simplices = self.simplices
         self.canvas.points = self.points
+        self.canvas.polygons = self.polygons
         self.canvas.update()
 
     def generate_single_frame(self):
@@ -232,9 +319,10 @@ class AnimationManager:
         logger.info("Запуск анимации")
         self.is_static_frame = False
         width, height, fps, _, num_points, _, _ = self.get_parameters()
-        if len(self.points) == 0 or len(self.points) != num_points or self.points.shape[1] != 2:
+        if len(self.points) == 0 or len(self.points) != num_points + (4 if self.fixed_corners_check.isChecked() else 0) + (8 if self.side_points_check.isChecked() else 0) + sum(len(polygon) for polygon in self.polygons):
             self.initialize_points(num_points, width, height)
         self.canvas.points = self.points
+        self.canvas.polygons = self.polygons
         self.lines_alpha = 1.0 if self.show_lines_check.isChecked() else 0.0
         self.triangles_alpha = 1.0 if self.fill_triangles_check.isChecked() else 0.0
         self.canvas.lines_alpha = self.lines_alpha
@@ -250,7 +338,7 @@ class AnimationManager:
         self.draw_frame()
 
     def update_points_and_frame(self):
-        """Обновление точек и кадра при изменении num_points, width, height или чекбоксов."""
+        """Обновление точек и кадра при изменении num_points, width, height, чекбоксов или полигонов."""
         logger.info("Обновление точек и кадра")
         width, height, fps, _, num_points, _, _ = self.get_parameters()
         self.initialize_points(num_points, width, height)
@@ -298,6 +386,7 @@ class AnimationManager:
             self.canvas.simplices = self.simplices
             self.canvas.lines_alpha = self.lines_alpha
             self.canvas.triangles_alpha = self.triangles_alpha
+            self.canvas.polygons = self.polygons
             self.canvas.update()
 
     def update_velocities(self):
@@ -311,15 +400,15 @@ class AnimationManager:
         speed = self.get_speed()
         num_fixed = 4 if self.fixed_corners_check.isChecked() else 0
         num_side = 8 if self.side_points_check.isChecked() else 0
+        num_polygon = sum(len(polygon) for polygon in self.polygons)
         num_total = len(self.points)
-        free_points_end = num_total - num_fixed - num_side
+        free_points_end = num_total - num_fixed - num_side - num_polygon
 
         # Обновляем скорости для свободных точек
         if free_points_end > 0:
             current_speeds = np.linalg.norm(self.velocities[:free_points_end], axis=1)
-            non_zero = current_speeds > 1e-6  # Избегаем деления на ноль
+            non_zero = current_speeds > 1e-6
             if np.any(non_zero):
-                # Нормализуем и масштабируем только ненулевые скорости
                 normalized_velocities = np.zeros_like(self.velocities[:free_points_end])
                 normalized_velocities[non_zero] = (
                     self.velocities[:free_points_end][non_zero] /
@@ -327,7 +416,6 @@ class AnimationManager:
                 ) * speed
                 self.velocities[:free_points_end] = normalized_velocities
             else:
-                # Если все скорости нулевые, генерируем новые направления
                 angles = np.random.uniform(0, 2 * np.pi, free_points_end)
                 self.velocities[:free_points_end] = np.vstack([
                     speed * np.cos(angles),
@@ -336,7 +424,7 @@ class AnimationManager:
 
         # Обновляем скорости для боковых точек
         if num_side > 0:
-            side_idx = num_total - num_side
+            side_idx = num_total - num_side - num_polygon
             side_speed = lambda: np.random.uniform(speed / 4, speed / 2) * np.random.choice([-1, 1])
             for i in [side_idx, side_idx + 1, side_idx + 2, side_idx + 3]:
                 current_speed = abs(self.velocities[i, 0]) or side_speed()
@@ -347,9 +435,9 @@ class AnimationManager:
                 self.velocities[i, 0] = 0
                 self.velocities[i, 1] = np.sign(self.velocities[i, 1]) * speed / 2 if current_speed != 0 else side_speed()
 
-        # Скорости угловых точек остаются нулевыми
-        if num_fixed > 0:
-            self.velocities[-num_fixed:] = 0
+        # Скорости угловых точек и точек полигонов остаются нулевыми
+        if num_fixed > 0 or num_polygon > 0:
+            self.velocities[free_points_end:] = 0
 
         self.canvas.update()
 
@@ -376,3 +464,6 @@ class AnimationManager:
 
     def get_triangles_alpha(self):
         return self.triangles_alpha
+
+    def get_polygons(self):
+        return self.polygons

@@ -1,4 +1,4 @@
-from PySide6.QtWidgets import QWidget, QGridLayout, QHBoxLayout, QLineEdit, QPushButton, QLabel, QSlider, QCheckBox, QProgressBar, QSizePolicy, QGroupBox, QVBoxLayout
+from PySide6.QtWidgets import QWidget, QGridLayout, QHBoxLayout, QLineEdit, QPushButton, QLabel, QSlider, QCheckBox, QProgressBar, QSizePolicy, QGroupBox, QVBoxLayout, QTextEdit
 from PySide6.QtCore import Qt
 from modules.config_manager import ConfigManager
 from loguru import logger
@@ -99,6 +99,9 @@ def setup_control_panel(window, get_parameters, canvas_class):
     ui.fps_input = QLineEdit(get_config_value('FPSInput', 'default', '30'))
     ui.duration_input = QLineEdit(get_config_value('DurationInput', 'default', '5'))
     ui.points_input = QLineEdit(get_config_value('PointsInput', 'default', '50'))
+    ui.polygons_input = QTextEdit()
+    ui.polygons_input.setPlaceholderText("(x1,y1),(x2,y2),(x3,y3)\n(x4,y4),(x5,y5),(x6,y6)")
+    ui.polygons_input.setFixedHeight(100)
 
     ui.fixed_corners_check = QCheckBox("Угловые")
     ui.fixed_corners_check.setChecked(get_config_bool('FixedCornersCheck', 'default', True))
@@ -184,6 +187,11 @@ def setup_control_panel(window, get_parameters, canvas_class):
     points_layout.addWidget(ui.fixed_corners_check, 0, 2)
     points_layout.addWidget(ui.side_points_check, 0, 3)
 
+    # Добавляем текстовое поле для полигонов
+    polygons_layout = QGridLayout()
+    polygons_layout.addWidget(QLabel("Полигоны:"), 0, 0)
+    polygons_layout.addWidget(ui.polygons_input, 0, 1, 1, 3)
+
     # Второй layout для чекбоксов и слайдеров
     render_params_layout = QGridLayout()
     render_params_layout.addWidget(ui.show_points_check, 0, 0, 1, 2)
@@ -200,6 +208,7 @@ def setup_control_panel(window, get_parameters, canvas_class):
     render_params_layout.addWidget(ui.brightness_range_input, 2, 4)
 
     generation_params_layout.addLayout(points_layout)
+    generation_params_layout.addLayout(polygons_layout)
     generation_params_layout.addLayout(render_params_layout)
 
     # Подключение сигналов для синхронизации слайдеров и полей ввода
@@ -212,9 +221,17 @@ def setup_control_panel(window, get_parameters, canvas_class):
     def update_brightness_range_input():
         ui.brightness_range_input.setText(str(ui.brightness_range_slider.value()))
 
+    def update_transition_speed_input():
+        ui.transition_speed_input.setText(str(ui.transition_speed_slider.value()))
+
+    def update_speed_input():
+        ui.speed_input.setText(str(ui.speed_slider.value()))
+
     ui.point_size_slider.valueChanged.connect(update_point_size_input)
     ui.line_width_slider.valueChanged.connect(update_line_width_input)
     ui.brightness_range_slider.valueChanged.connect(update_brightness_range_input)
+    ui.transition_speed_slider.valueChanged.connect(update_transition_speed_input)
+    ui.speed_slider.valueChanged.connect(update_speed_input)
 
     def on_point_size_input_changed():
         try:
@@ -246,9 +263,31 @@ def setup_control_panel(window, get_parameters, canvas_class):
         except ValueError:
             ui.brightness_range_input.setText(str(ui.brightness_range_slider.value()))
 
+    def on_transition_speed_input_changed():
+        try:
+            value = int(ui.transition_speed_input.text())
+            if ui.transition_speed_slider.minimum() <= value <= ui.transition_speed_slider.maximum():
+                ui.transition_speed_slider.setValue(value)
+            else:
+                ui.transition_speed_input.setText(str(ui.transition_speed_slider.value()))
+        except ValueError:
+            ui.transition_speed_input.setText(str(ui.transition_speed_slider.value()))
+
+    def on_speed_input_changed():
+        try:
+            value = int(ui.speed_input.text())
+            if ui.speed_slider.minimum() <= value <= ui.speed_slider.maximum():
+                ui.speed_slider.setValue(value)
+            else:
+                ui.speed_input.setText(str(ui.speed_slider.value()))
+        except ValueError:
+            ui.speed_input.setText(str(ui.speed_slider.value()))
+
     ui.point_size_input.textChanged.connect(on_point_size_input_changed)
     ui.line_width_input.textChanged.connect(on_line_width_input_changed)
     ui.brightness_range_input.textChanged.connect(on_brightness_range_input_changed)
+    ui.transition_speed_input.textChanged.connect(on_transition_speed_input_changed)
+    ui.speed_input.textChanged.connect(on_speed_input_changed)
 
     # Блок для основного цвета
     main_color_group = QGroupBox("Основной цвет")
@@ -432,11 +471,11 @@ def setup_control_panel(window, get_parameters, canvas_class):
     ui.bg_saturation_input.textChanged.connect(on_bg_saturation_input_changed)
     ui.bg_value_input.textChanged.connect(on_bg_value_input_changed)
 
-    # Блок для параметров скорости
-    speed_params_group = QGroupBox("Параметры скорости")
+    # Блок для параметров скорости для
+    speed_params_group = QGroupBox("Параметры скорости качества")
     speed_params_layout = QGridLayout()
     speed_params_group.setLayout(speed_params_layout)
-    speed_params_group.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+    speed_params_group.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Policy.Fixed)
 
     speed_params_layout.addWidget(QLabel("Скорость переходов:"), 0, 0)
     speed_params_layout.addWidget(ui.transition_speed_slider, 0, 1)
@@ -445,70 +484,34 @@ def setup_control_panel(window, get_parameters, canvas_class):
     speed_params_layout.addWidget(ui.speed_slider, 1, 1)
     speed_params_layout.addWidget(ui.speed_input, 1, 2)
 
-    # Подключение сигналов для синхронизации слайдеров и полей ввода
-    def update_transition_speed_input():
-        ui.transition_speed_input.setText(str(ui.transition_speed_slider.value()))
-
-    def update_speed_input():
-        ui.speed_input.setText(str(ui.speed_slider.value()))
-
-    ui.transition_speed_slider.valueChanged.connect(update_transition_speed_input)
-    ui.speed_slider.valueChanged.connect(update_speed_input)
-
-    def on_transition_speed_input_changed():
-        try:
-            value = int(ui.transition_speed_input.text())
-            if ui.transition_speed_slider.minimum() <= value <= ui.transition_speed_slider.maximum():
-                ui.transition_speed_slider.setValue(value)
-            else:
-                ui.transition_speed_input.setText(str(ui.transition_speed_slider.value()))
-        except ValueError:
-            ui.transition_speed_input.setText(str(ui.transition_speed_slider.value()))
-
-    def on_speed_input_changed():
-        try:
-            value = int(ui.speed_input.text())
-            if ui.speed_slider.minimum() <= value <= ui.speed_slider.maximum():
-                ui.speed_slider.setValue(value)
-            else:
-                ui.speed_input.setText(str(ui.speed_slider.value()))
-        except ValueError:
-            ui.speed_input.setText(str(ui.speed_slider.value()))
-
-    ui.transition_speed_input.textChanged.connect(on_transition_speed_input_changed)
-    ui.speed_input.textChanged.connect(on_speed_input_changed)
-
-    # Блок для действий (кнопки и прогресс-бар)
-    actions_group = QGroupBox("Действия")
-    actions_layout = QGridLayout()
-    actions_group.setLayout(actions_layout)
-    actions_group.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+    # Блок для действий
+    action_group = QGroupBox("Действия")
+    action_layout = QVBoxLayout()
+    action_group.setLayout(action_layout)
+    action_group.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
 
     ui.start_stop_button = QPushButton("Начать анимацию")
     ui.generate_frame_button = QPushButton("Сгенерировать кадр")
     ui.export_frame_button = QPushButton("Экспортировать кадр")
-    ui.export_button = QPushButton("Экспортировать видео")
+    ui.export_button = QPushButton("Экспортировать анимацию")
+    action_layout.addWidget(ui.start_stop_button)
+    action_layout.addWidget(ui.generate_frame_button)
+    action_layout.addWidget(ui.export_frame_button)
+    action_layout.addWidget(ui.export_button)
 
+    # Прогресс бар для
     ui.progress_bar = QProgressBar()
     ui.progress_bar.setMinimum(0)
-    ui.progress_bar.setMaximum(100)
-    ui.progress_bar.setValue(0)
-    ui.progress_bar.setTextVisible(True)
-
-    actions_layout.addWidget(ui.generate_frame_button, 0, 0, 1, 2)
-    actions_layout.addWidget(ui.export_frame_button, 0, 2, 1, 2)
-    actions_layout.addWidget(ui.start_stop_button, 1, 0, 1, 2)
-    actions_layout.addWidget(ui.export_button, 1, 2, 1, 2)
-    actions_layout.addWidget(QLabel("Прогресс экспорта:"), 2, 0, 1, 2)
-    actions_layout.addWidget(ui.progress_bar, 2, 2, 1, 2)
-
-    # Компоновка основного layout
+    # Максимум будет установлен при экспорте
+    # Добавляем все группы в основной макет
     control_layout.addWidget(image_params_group)
     control_layout.addWidget(generation_params_group)
     control_layout.addWidget(main_color_group)
     control_layout.addWidget(bg_color_group)
     control_layout.addWidget(speed_params_group)
+    control_layout.addWidget(action_group)
+    control_layout.addWidget(ui.progress_bar)
+
     control_layout.addStretch()
-    control_layout.addWidget(actions_group)
 
     return ui

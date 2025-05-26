@@ -91,5 +91,87 @@ def initialize_triangle_colors(simplices, base_color, brightness_range, triangle
         else:
             value = max(0.0, min(1.0, 1.0 - brightness_range + np.random.rand() * brightness_range * 2))
             rgb = colorsys.hsv_to_rgb(base_hue, base_saturation, value)
-            new_colors[simplex_key] = rgb + (1.0,)  # Добавляем альфа-канал
+            new_colors[simplex_key] = rgb + (1.0,)
     return new_colors
+
+def point_in_polygon(point, polygon):
+    """
+    Проверка, находится ли точка внутри полигона (Ray Casting Algorithm).
+
+    Args:
+        point (np.array): Координаты точки [x, y].
+        polygon (np.array): Массив вершин полигона [[x1, y1], [x2, y2], ...].
+
+    Returns:
+        bool: True, если точка внутри полигона, иначе False.
+    """
+    x, y = point
+    inside = False
+    n = len(polygon)
+    j = n - 1
+    for i in range(n):
+        if ((polygon[i][1] > y) != (polygon[j][1] > y)) and \
+           (x < (polygon[j][0] - polygon[i][0]) * (y - polygon[i][1]) / (polygon[j][1] - polygon[i][1] + 1e-10) + polygon[i][0]):
+            inside = not inside
+        j = i
+    return inside
+
+def segment_intersects_polygon(p1, p2, polygon):
+    """
+    Проверка, пересекает ли отрезок [p1, p2] полигон.
+
+    Args:
+        p1 (np.array): Начальная точка отрезка [x1, y1].
+        p2 (np.array): Конечная точка отрезка [x2, y2].
+        polygon (np.array): Массив вершин полигона [[x1, y1], [x2, y2], ...].
+
+    Returns:
+        bool: True, если отрезок пересекает полигон, иначе False.
+    """
+    def ccw(A, B, C):
+        return (C[1] - A[1]) * (B[0] - A[0]) > (B[1] - A[1]) * (C[0] - A[0])
+
+    def intersects(A, B, C, D):
+        return ccw(A, C, D) != ccw(B, C, D) and ccw(A, B, C) != ccw(A, B, D)
+
+    for i in range(len(polygon)):
+        p3 = polygon[i]
+        p4 = polygon[(i + 1) % len(polygon)]
+        if intersects(p1, p2, p3, p4):
+            return True
+    return False
+
+def closest_point_on_polygon(point, polygon):
+    """
+    Нахождение ближайшей точки на границе полигона к данной точке.
+
+    Args:
+        point (np.array): Координаты точки [x, y].
+        polygon (np.array): Массив вершин полигона [[x1, y1], [x2, y2], ...].
+
+    Returns:
+        np.array: Координаты ближайшей точки на границе полигона.
+    """
+    min_dist = float('inf')
+    closest = point
+    for i in range(len(polygon)):
+        p1 = polygon[i]
+        p2 = polygon[(i + 1) % len(polygon)]
+        # Проекция точки на отрезок
+        v = p2 - p1
+        w = point - p1
+        c1 = np.dot(w, v)
+        if c1 <= 0:
+            closest_candidate = p1
+        else:
+            c2 = np.dot(v, v)
+            if c2 <= c1:
+                closest_candidate = p2
+            else:
+                t = c1 / c2
+                closest_candidate = p1 + t * v
+        dist = np.linalg.norm(point - closest_candidate)
+        if dist < min_dist:
+            min_dist = dist
+            closest = closest_candidate
+    return closest

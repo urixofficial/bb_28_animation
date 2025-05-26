@@ -35,130 +35,72 @@ class ExportManager:
         self.progress_bar = progress_bar
         self.side_points_check = side_points_check
         self.transition_speed_slider = transition_speed_slider
-        self.show_lines_check.stateChanged.connect(self.anim_manager.update_lines_alpha)
-        self.fill_triangles_check.stateChanged.connect(self.anim_manager.update_triangles_alpha)
-
-    def get_color(self):
-        """Получение RGB цвета для точек и линий."""
-        return get_color(self.main_hue_slider.value(),
-                        self.main_saturation_slider.value(),
-                        self.main_value_slider.value())
-
-    def get_background_color(self):
-        """Получение RGB цвета для фона."""
-        return get_color(self.bg_hue_slider.value(),
-                        self.bg_saturation_slider.value(),
-                        self.bg_value_slider.value())
-
-    def _render_frame(self, width, height):
-        """Рендеринг одного кадра с использованием OpenGL и захват буфера."""
-        try:
-            # Убедимся, что канвас обновлен
-            self.anim_manager.draw_frame()
-            QCoreApplication.processEvents()
-
-            # Захват буфера кадра
-            glPixelStorei(GL_PACK_ALIGNMENT, 1)
-            data = glReadPixels(0, 0, width, height, GL_RGB, GL_UNSIGNED_BYTE)
-            frame_data = np.frombuffer(data, dtype=np.uint8).reshape(height, width, 3)
-            # Перевернем изображение по вертикали, так как OpenGL рендерит снизу вверх
-            frame_data = np.flipud(frame_data)
-            return frame_data
-        except Exception as e:
-            logger.error(f"Ошибка при захвате кадра OpenGL: {e}")
-            return np.zeros((height, width, 3), dtype=np.uint8)
 
     def export_frame(self):
-        """Экспорт текущего кадра в PNG."""
+        """Экспорт текущего кадра в изображение."""
         logger.info("Начало экспорта кадра")
-        self.progress_bar.setValue(0)
-        QCoreApplication.processEvents()
-        width, height, fps, duration, num_points, point_size, line_width = self.anim_manager.get_parameters()
-
-        if len(self.anim_manager.get_points()) == 0:
-            logger.info("Инициализация данных для экспорта кадра")
-            self.anim_manager.generate_single_frame()
-            self.progress_bar.setValue(40)
-            QCoreApplication.processEvents()
-
-        frame_data = self._render_frame(width, height)
-        self.progress_bar.setValue(60)
-        QCoreApplication.processEvents()
-
-        file_path, _ = QFileDialog.getSaveFileName(None, "Save Frame", "", "PNG Image (*.png)")
-        if not file_path:
-            logger.warning("Экспорт кадра отменен")
-            self.progress_bar.setValue(0)
-            return
-
         try:
-            logger.info(f"Сохранение кадра в {file_path}")
-            Image.fromarray(frame_data).save(file_path, format='PNG')
-            self.progress_bar.setValue(100)
-            QCoreApplication.processEvents()
-            logger.info(f"Кадр успешно сохранен в {file_path}")
-        except Exception as e:
-            logger.error(f"Ошибка при сохранении кадра: {e}")
-        finally:
-            self.progress_bar.setValue(0)
-            QCoreApplication.processEvents()
-
-    def export_animation(self):
-        """Экспорт анимации в MP4."""
-        logger.info("Начало экспорта анимации в MP4")
-        self.progress_bar.setValue(0)
-        QCoreApplication.processEvents()
-        width, height, fps, duration, num_points, point_size, line_width = self.anim_manager.get_parameters()
-        total_frames = int(fps * duration)
-        num_fixed = 4 if self.fixed_corners_check.isChecked() else 0
-        num_side = 8 if self.side_points_check.isChecked() else 0
-
-        file_path, _ = QFileDialog.getSaveFileName(
-            None, "Save Animation", "", "MP4 Video (*.mp4)"
-        )
-        if not file_path:
-            logger.warning("Экспорт анимации отменен")
-            self.progress_bar.setValue(0)
-            return
-
-        if not file_path.lower().endswith('.mp4'):
-            file_path += '.mp4'
-
-        try:
-            fourcc = cv2.VideoWriter.fourcc(*'mp4v')
-            out = cv2.VideoWriter(file_path, fourcc, fps, (width, height))
-
-            if not out.isOpened():
-                logger.error("Не удалось открыть VideoWriter для записи MP4")
-                self.progress_bar.setValue(0)
+            width, height, _, _, _, _, _ = self.anim_manager.get_parameters()
+            file_path, _ = QFileDialog.getSaveFileName(
+                None, "Сохранить кадр", "", "PNG Files (*.png);;All Files (*)"
+            )
+            if not file_path:
+                logger.info("Экспорт кадра отменён")
                 return
 
-            # Инициализируем точки, если они ещё не созданы
-            if len(self.anim_manager.get_points()) == 0:
-                self.anim_manager.generate_single_frame()
+            self.anim_manager.draw_frame()
+            glPixelStorei(GL_PACK_ALIGNMENT, 1)
+            data = glReadPixels(0, 0, width, height, GL_RGB, GL_UNSIGNED_BYTE)
+            image = Image.frombytes("RGB", (width, height), data)
+            image = image.transpose(Image.FLIP_VERTICAL)
+            image.save(file_path, "PNG")
+            logger.info(f"Кадр успешно экспортирован: {file_path}")
+        except Exception as e:
+            logger.error(f"Ошибка экспорта кадра: {e}")
 
-            # Сохраняем начальное состояние точек
-            initial_points = self.anim_manager.get_points().copy()
-            initial_velocities = self.anim_manager.get_velocities().copy()
+    def export_animation(self):
+        """Экспорт анимации в видео."""
+        logger.info("Начало экспорта анимации")
+        try:
+            width, height, fps, duration, num_points, point_size, line_width = self.anim_manager.get_parameters()
+            file_path, _ = QFileDialog.getSaveFileName(
+                None, "Сохранить анимацию", "", "MP4 Files (*.mp4);;All Files (*)"
+            )
+            if not file_path:
+                logger.info("Экспорт анимации отменён")
+                return
+
+            total_frames = int(fps * duration)
+            fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+            out = cv2.VideoWriter(file_path, fourcc, fps, (width, height))
+            self.progress_bar.setMaximum(total_frames)
+            self.progress_bar.setValue(0)
+
+            # Инициализация точек для анимации
+            self.anim_manager.initialize_points(num_points, width, height)
+            self.anim_manager.lines_alpha = 1.0 if self.show_lines_check.isChecked() else 0.0
+            self.anim_manager.triangles_alpha = 1.0 if self.fill_triangles_check.isChecked() else 0.0
+            self.anim_manager.canvas.lines_alpha = self.anim_manager.lines_alpha
+            self.anim_manager.canvas.triangles_alpha = self.anim_manager.triangles_alpha
+            self.anim_manager.update_triangulation_and_colors()
 
             for frame in range(total_frames):
                 self.anim_manager.update_frame(for_export=True)
-                frame_data = self._render_frame(width, height)
-                frame_data_bgr = cv2.cvtColor(frame_data, cv2.COLOR_RGB2BGR)
-                out.write(frame_data_bgr)
-                self.progress_bar.setValue(int((frame + 1) / total_frames * 100))
+                glPixelStorei(GL_PACK_ALIGNMENT, 1)
+                data = glReadPixels(0, 0, width, height, GL_RGB, GL_UNSIGNED_BYTE)
+                image = Image.frombytes("RGB", (width, height), data)
+                image = image.transpose(Image.FLIP_VERTICAL)
+                frame_data = np.array(image)
+                frame_data = cv2.cvtColor(frame_data, cv2.COLOR_RGB2BGR)
+                out.write(frame_data)
+                self.progress_bar.setValue(frame + 1)
                 QCoreApplication.processEvents()
 
-            # Восстанавливаем начальное состояние
-            self.anim_manager.points = initial_points
-            self.anim_manager.velocities = initial_velocities
-            self.anim_manager.update_frame(for_export=True)
-            self.anim_manager.draw_frame()
-
             out.release()
-            logger.info(f"Видео успешно сохранено в {file_path}")
-        except Exception as e:
-            logger.error(f"Ошибка при экспорте анимации: {e}")
-        finally:
+            logger.info(f"Анимация успешно экспортирована: {file_path}")
             self.progress_bar.setValue(0)
-            QCoreApplication.processEvents()
+        except Exception as e:
+            logger.error(f"Ошибка экспорта анимации: {e}")
+            if 'out' in locals():
+                out.release()
+            self.progress_bar.setValue(0)

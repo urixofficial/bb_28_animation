@@ -1,7 +1,7 @@
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 from OpenGL.GL import *
 from OpenGL.GLU import *
-from modules.utils import initialize_points, get_color, initialize_triangle_colors
+from modules.utils import initialize_points, get_color, initialize_triangle_colors, segment_intersects_polygon
 from modules.config_manager import ConfigManager
 from loguru import logger
 import numpy as np
@@ -15,11 +15,12 @@ class OpenGLCanvas(QOpenGLWidget):
         self.points = np.array([])
         self.velocities = np.array([])
         self.triangle_colors = {}
-        self.triangle_alphas = {}  # Альфа-значения для каждого симплекса
-        self.line_alphas = {}  # Альфа-значения для каждой линии
+        self.triangle_alphas = {}
+        self.line_alphas = {}
         self.simplices = []
-        self.lines_alpha = 0.0  # По умолчанию 0.0, будет обновлено AnimationManager
-        self.triangles_alpha = 0.0  # По умолчанию 0.0, будет обновлено AnimationManager
+        self.polygons = []
+        self.lines_alpha = 0.0
+        self.triangles_alpha = 0.0
         config_manager = ConfigManager('config.ini')
         self.setMinimumSize(
             config_manager.get_int('Window', 'min_width', 400),
@@ -27,13 +28,15 @@ class OpenGLCanvas(QOpenGLWidget):
         )
 
     def initializeGL(self):
-        """Инициализация OpenGL."""
         try:
             glClearColor(0.0, 0.0, 0.0, 1.0)
             glEnable(GL_BLEND)
-            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)  # Стандартное альфа-смешивание
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
             glEnable(GL_POINT_SMOOTH)
             glEnable(GL_LINE_SMOOTH)
+            glPixelStorei(GL_UNPACK_ALIGNMENT, 1)
+            glPixelStorei(GL_PACK_ALIGNMENT, 1)
+            glEnable(GL_FRAMEBUFFER_SRGB)
             status = glCheckFramebufferStatus(GL_FRAMEBUFFER)
             if status != GL_FRAMEBUFFER_COMPLETE:
                 logger.error(f"Фреймбуфер не полный, статус: {status}")
@@ -143,10 +146,16 @@ class OpenGLCanvas(QOpenGLWidget):
                         v0, v1 = simplex[i], simplex[(i + 1) % 3]
                         line_key = tuple(sorted([v0, v1]))
                         if line_key in self.line_alphas:
-                            alpha = self.line_alphas[line_key] * self.lines_alpha
-                            glColor4f(*color, alpha)
-                            glVertex2f(self.points[v0, 0], self.points[v0, 1])
-                            glVertex2f(self.points[v1, 0], self.points[v1, 1])
+                            intersects = False
+                            for polygon in self.polygons:
+                                if segment_intersects_polygon(self.points[v0], self.points[v1], polygon):
+                                    intersects = True
+                                    break
+                            if not intersects:
+                                alpha = self.line_alphas[line_key] * self.lines_alpha
+                                glColor4f(*color, alpha)
+                                glVertex2f(self.points[v0, 0], self.points[v0, 1])
+                                glVertex2f(self.points[v1, 0], self.points[v1, 1])
                 glEnd()
 
             # Рендеринг точек
